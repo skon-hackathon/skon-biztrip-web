@@ -23,6 +23,8 @@ class UserRole(StrEnum):
     ADMIN = "ADMIN"
 
 
+# 값이 멤버명과 다르다 (TRIPS_READ -> "trips:read"). API 스코프 문자열 그대로를 쓰기 때문.
+# 저장은 ARRAY(String)으로 한다 — SAEnum으로 매핑하면 값 대신 멤버명이 저장되어 깨진다.
 class ApiKeyScope(StrEnum):
     TRIPS_READ = "trips:read"
     TRIPS_WRITE = "trips:write"

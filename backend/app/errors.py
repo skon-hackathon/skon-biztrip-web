@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+RESERVED_LOCATIONS = frozenset({"body", "query", "path", "header", "cookie"})
 
 
 class AppError(Exception):
@@ -50,9 +53,23 @@ def register_error_handlers(app: FastAPI) -> None:
         _: Request, exc: RequestValidationError
     ) -> JSONResponse:
         first = exc.errors()[0] if exc.errors() else {}
-        location = first.get("loc") or []
-        field = str(location[-1]) if location else None
+        parts = [part for part in (first.get("loc") or []) if isinstance(part, str)]
+        field = parts[-1] if parts and parts[-1] not in RESERVED_LOCATIONS else None
         return JSONResponse(
             status_code=422,
             content=_body("SCHEMA_INVALID", first.get("msg", "요청 형식이 올바르지 않습니다"), field),
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=_body("HTTP_ERROR", str(exc.detail), None),
+        )
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected(_: Request, __: Exception) -> JSONResponse:
+        return JSONResponse(
+            status_code=500,
+            content=_body("INTERNAL_ERROR", "서버 내부 오류가 발생했습니다", None),
         )
