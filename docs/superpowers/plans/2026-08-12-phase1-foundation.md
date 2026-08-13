@@ -299,7 +299,10 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
-    pass
+    # eager_defaults=True: SQLAlchemy 2.0 기본값 "auto"는 INSERT에만 RETURNING을 쓴다.
+    # 그래서 UPDATE 뒤 server-onupdate 컬럼(updated_at)이 expire 상태로 남고,
+    # expire_on_commit=False여도 커밋 후 읽으면 async에서 MissingGreenlet이 난다.
+    __mapper_args__ = {"eager_defaults": True}
 
 
 class TimestampMixin:
@@ -755,6 +758,19 @@ async def test_can_persist_department_and_user(db_session):
     assert found.is_active is True
 
 
+async def test_department_tree_links_parent(db_session):
+    parent = Department(code="D000", name="본사")
+    db_session.add(parent)
+    await db_session.flush()
+
+    child = Department(code="D110", name="배터리연구소 1팀", parent_id=parent.id)
+    db_session.add(child)
+    await db_session.flush()
+
+    found = (await db_session.execute(select(Department).where(Department.code == "D110"))).scalar_one()
+    assert found.parent_id == parent.id
+
+
 async def test_code_group_holds_codes_with_extra(db_session):
     group = CodeGroup(group_code="COUNTRY", name="국가")
     db_session.add(group)
@@ -811,6 +827,8 @@ class Department(Base, TimestampMixin):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("department.id"))
 
 
+# 주의: PostgreSQL에서 user는 예약 의사상수다. 원시 SQL을 쓸 때 반드시 큰따옴표로
+# 감싼 "user"로 써야 한다. 따옴표 없이 쓰면 에러가 아니라 현재 롤 이름이 조용히 반환된다.
 class User(Base, TimestampMixin):
     __tablename__ = "user"
 
@@ -868,7 +886,7 @@ class Code(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     extra: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
-    group: Mapped[CodeGroup] = relationship(back_populates="codes")
+    group: Mapped[CodeGroup] = relationship(back_populates="codes", lazy="selectin")
 ```
 
 - [ ] **Step 5: center 모델 구현**

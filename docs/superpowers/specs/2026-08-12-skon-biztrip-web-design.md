@@ -310,10 +310,12 @@ GET    /notifications  ·  POST /notifications/{id}/read
 | 401 | 인증 실패 (토큰/키 없음·만료·폐기) |
 | 403 | 권한 또는 스코프 부족 |
 | 404 | 리소스 없음 (타인 리소스 접근도 404로 처리) |
-| 409 | 상태전이 위반 |
+| 409 | 상태전이 위반, 참조 중인 마스터 데이터 삭제 시도 |
 | 422 | Pydantic 스키마 위반 |
 
 409 응답에 도메인 코드를 실어야 Agent가 재시도 여부를 판단할 수 있다.
+
+**마스터 데이터 삭제.** `department`, `code_group`, `fund_center`, `cost_center`, `user`의 FK에는 `ondelete`를 걸지 않는다. 참조가 남은 채 삭제를 시도하면 PostgreSQL이 거부하는 것이 옳은 동작이기 때문이다. 다만 그대로 두면 `IntegrityError`가 통일 에러 핸들러의 catch-all로 떨어져 `500 INTERNAL_ERROR`가 되므로, Admin CRUD의 삭제 엔드포인트는 `IntegrityError`를 잡아 `ConflictError("HAS_DEPENDENTS", ...)` 즉 409로 변환한다. 또한 `CodeGroup`의 `cascade="all, delete-orphan"`은 ORM 객체 삭제에만 적용되므로, 삭제는 Core의 일괄 `delete()` 문이 아니라 `session.get()` + `session.delete()`로 수행해야 한다.
 
 ## 8. 테스트
 
