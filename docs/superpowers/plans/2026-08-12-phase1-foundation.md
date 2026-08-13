@@ -1050,17 +1050,21 @@ def assert_valid_code(
 
 
 async def load_active_codes(session: AsyncSession, group_code: str) -> set[str]:
-    group = (
-        await session.execute(select(CodeGroup).where(CodeGroup.group_code == group_code))
+    group_id = (
+        await session.execute(select(CodeGroup.id).where(CodeGroup.group_code == group_code))
     ).scalar_one_or_none()
-    if group is None:
+    if group_id is None:
         raise ValidationError("UNKNOWN_CODE_GROUP", f"존재하지 않는 코드그룹입니다: {group_code}")
 
     rows = await session.execute(
-        select(Code.code).where(Code.group_id == group.id, Code.is_active.is_(True))
+        select(Code.code).where(Code.group_id == group_id, Code.is_active.is_(True))
     )
     return set(rows.scalars().all())
 ```
+
+**왜 `select(CodeGroup)`이 아니라 `select(CodeGroup.id)`인가.** 엔티티를 가져오면 `CodeGroup.codes`가 `lazy="selectin"`이라 아무도 읽지 않는 코드 목록을 통째로 한 번 더 조회한다 (호출당 3쿼리). 컬럼만 선택하면 ORM 객체가 만들어지지 않아 그 쿼리가 사라진다 (2쿼리).
+
+**왜 조인 한 방으로 합치지 않는가.** `select(Code.code).join(CodeGroup).where(...)` 한 문장으로 줄이면 "코드그룹이 없음"과 "코드그룹은 있으나 활성 코드가 0건"을 구분할 수 없다. 전자는 `UNKNOWN_CODE_GROUP`을 던져야 하고 후자는 정상적으로 빈 `set()`을 반환해야 하므로, 2쿼리 구조는 우연이 아니라 의도된 것이다.
 
 - [ ] **Step 4: 테스트 통과 확인**
 
