@@ -14,6 +14,9 @@ class Department(Base, TimestampMixin):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("department.id"))
 
 
+# 주의: "user"는 PostgreSQL 예약어(현재 세션 역할명을 뜻하는 의사 상수)이므로 raw SQL에서는
+# 반드시 큰따옴표로 감싸 SELECT * FROM "user" 처럼 써야 한다. SQLAlchemy ORM/Core는 자동으로
+# 따옴표를 붙이지만, 따옴표 없는 raw SQL은 조용히 다른 값(연결 계정명)을 반환한다.
 class User(Base, TimestampMixin):
     __tablename__ = "user"
 

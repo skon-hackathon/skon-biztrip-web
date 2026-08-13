@@ -33,4 +33,4 @@ class Code(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     extra: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
-    group: Mapped[CodeGroup] = relationship(back_populates="codes")
+    group: Mapped[CodeGroup] = relationship(back_populates="codes", lazy="selectin")

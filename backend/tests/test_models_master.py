@@ -40,6 +40,19 @@ async def test_can_persist_department_and_user(db_session):
     assert found.is_active is True
 
 
+async def test_department_can_have_parent_department(db_session):
+    parent = Department(code="D000", name="본부")
+    db_session.add(parent)
+    await db_session.flush()
+
+    child = Department(code="D001", name="배터리연구소", parent_id=parent.id)
+    db_session.add(child)
+    await db_session.flush()
+
+    found = (await db_session.execute(select(Department).where(Department.code == "D001"))).scalar_one()
+    assert found.parent_id == parent.id
+
+
 async def test_code_group_holds_codes_with_extra(db_session):
     group = CodeGroup(group_code="COUNTRY", name="국가")
     db_session.add(group)
