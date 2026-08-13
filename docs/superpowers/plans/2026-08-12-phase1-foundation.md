@@ -540,6 +540,8 @@ class UserRole(StrEnum):
     ADMIN = "ADMIN"
 
 
+# 값이 멤버명과 다르다 (TRIPS_READ -> "trips:read"). API 스코프 문자열 그대로를 쓰기 때문.
+# 저장은 ARRAY(String)으로 한다 — SAEnum으로 매핑하면 값 대신 멤버명이 저장되어 깨진다.
 class ApiKeyScope(StrEnum):
     TRIPS_READ = "trips:read"
     TRIPS_WRITE = "trips:write"
@@ -581,6 +583,9 @@ class EntityType(StrEnum):
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+RESERVED_LOCATIONS = frozenset({"body", "query", "path", "header", "cookie"})
 
 
 class AppError(Exception):
@@ -630,13 +635,29 @@ def register_error_handlers(app: FastAPI) -> None:
         _: Request, exc: RequestValidationError
     ) -> JSONResponse:
         first = exc.errors()[0] if exc.errors() else {}
-        location = first.get("loc") or []
-        field = str(location[-1]) if location else None
+        parts = [part for part in (first.get("loc") or []) if isinstance(part, str)]
+        field = parts[-1] if parts and parts[-1] not in RESERVED_LOCATIONS else None
         return JSONResponse(
             status_code=422,
             content=_body("SCHEMA_INVALID", first.get("msg", "요청 형식이 올바르지 않습니다"), field),
         )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=_body("HTTP_ERROR", str(exc.detail), None),
+        )
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected(_: Request, __: Exception) -> JSONResponse:
+        return JSONResponse(
+            status_code=500,
+            content=_body("INTERNAL_ERROR", "서버 내부 오류가 발생했습니다", None),
+        )
 ```
+
+**보조 설명.** `StarletteHTTPException`을 잡아야 라우팅 404·405까지 통일 바디로 나간다 (`fastapi.HTTPException`이 이걸 상속하므로 둘 다 커버된다). `RESERVED_LOCATIONS` 필터는 깨진 JSON 본문의 `loc: ("body", 1)` 같은 문자 오프셋이 `field`에 필드명처럼 실리는 것을 막는다. `Exception` 핸들러는 Starlette `ServerErrorMiddleware`가 응답을 보낸 뒤 예외를 다시 raise하므로, 테스트에서는 `httpx.ASGITransport(app=..., raise_app_exceptions=False)`로 응답을 받아야 한다 (운영의 uvicorn은 정상적으로 JSON 500을 내려준다).
 
 - [ ] **Step 5: main.py에 등록**
 
@@ -655,6 +676,16 @@ register_error_handlers(app)
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 ```
+
+- [ ] **Step 5b: 에러 계약 전체를 테스트로 덮기**
+
+`backend/tests/test_errors.py`에 아래 HTTP 레벨 테스트를 추가한다. 전부 `test_handler_returns_unified_body`와 같은 방식으로 일회용 `FastAPI()` 인스턴스를 세워서 검증한다 (공용 `client` 픽스처로 바꾸지 않는다).
+
+- 5개 서브클래스 + 베이스 `AppError`까지 파라미터라이즈해서 상태코드와 통일 바디를 각각 확인
+- 본문 검증 실패: 필수 필드 누락 → 422, `code == "SCHEMA_INVALID"`, `field == "<누락 필드명>"`
+- 깨진 JSON 본문 → 422, `code == "SCHEMA_INVALID"`, **`field is None`** (`RESERVED_LOCATIONS` 회귀 방지)
+- 없는 경로 `GET /nonexistent` → 404, `code == "HTTP_ERROR"`, 통일 바디
+- 라우트에서 처리되지 않은 예외 → 500, `code == "INTERNAL_ERROR"`. 이 케이스만 `httpx.ASGITransport(app=..., raise_app_exceptions=False)` 사용
 
 - [ ] **Step 6: 테스트 통과 확인**
 
