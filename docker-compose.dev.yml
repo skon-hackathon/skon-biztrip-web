@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: skon-db-dev
+    environment:
+      POSTGRES_USER: skon
+      POSTGRES_PASSWORD: skon
+      POSTGRES_DB: skon
+    ports:
+      - "5432:5432"
+    volumes:
+      - skon_pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skon -d skon"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  skon_pgdata_dev:
