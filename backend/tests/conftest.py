@@ -1,3 +1,5 @@
+from collections.abc import AsyncGenerator
+
 import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -20,11 +22,13 @@ async def test_engine():
 
 
 @pytest.fixture
-async def db_session(test_engine) -> AsyncSession:
+async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
     """각 테스트를 외부 트랜잭션 안에서 실행하고 끝나면 롤백한다."""
     connection = await test_engine.connect()
     transaction = await connection.begin()
-    session = async_sessionmaker(bind=connection, expire_on_commit=False)()
+    session = async_sessionmaker(
+        bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    )()
 
     try:
         yield session
@@ -35,7 +39,7 @@ async def db_session(test_engine) -> AsyncSession:
 
 
 @pytest.fixture
-async def client(db_session) -> httpx.AsyncClient:
+async def client(db_session) -> AsyncGenerator[httpx.AsyncClient, None]:
     app.dependency_overrides[get_db] = lambda: db_session
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
