@@ -357,6 +357,8 @@ asyncio_default_test_loop_scope = "session"
 그다음 `backend/tests/conftest.py`:
 
 ```python
+from collections.abc import AsyncGenerator
+
 import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -379,11 +381,13 @@ async def test_engine():
 
 
 @pytest.fixture
-async def db_session(test_engine) -> AsyncSession:
+async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
     """각 테스트를 외부 트랜잭션 안에서 실행하고 끝나면 롤백한다."""
     connection = await test_engine.connect()
     transaction = await connection.begin()
-    session = async_sessionmaker(bind=connection, expire_on_commit=False)()
+    session = async_sessionmaker(
+        bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    )()
 
     try:
         yield session
@@ -394,13 +398,15 @@ async def db_session(test_engine) -> AsyncSession:
 
 
 @pytest.fixture
-async def client(db_session) -> httpx.AsyncClient:
+async def client(db_session) -> AsyncGenerator[httpx.AsyncClient, None]:
     app.dependency_overrides[get_db] = lambda: db_session
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
 ```
+
+**`join_transaction_mode="create_savepoint"`가 왜 필요한가:** 기본값 `"conditional_savepoint"`는 바깥 트랜잭션이 SAVEPOINT가 아닌 평범한 트랜잭션일 때 `"rollback_only"`로 떨어진다. 이 모드에서는 테스트 안의 `session.commit()`은 흡수되지만 `session.rollback()`이 바깥 커넥션 트랜잭션까지 전파되어 픽스처가 들고 있던 `transaction` 객체가 커넥션에서 분리된다. 그 뒤의 `commit()`은 `skon_test`에 실제로 기록되고, teardown의 `transaction.rollback()`은 `SAWarning: transaction already deassociated from connection`만 남기고 아무것도 되돌리지 못한다. 멱등 시드(Task 9)나 중복 계정 처리(Task 11)처럼 `rollback()`을 쓰는 코드가 테스트에 들어오는 순간 테스트 간 데이터 누수가 조용히 생긴다. `create_savepoint`를 지정하면 커밋·롤백 모두 SAVEPOINT 안에 갇힌다.
 
 - [ ] **Step 5: test_health.py를 client 픽스처로 전환**
 
