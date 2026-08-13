@@ -265,6 +265,7 @@ git commit -m "feat: add dev postgres compose and settings"
 
 **Files:**
 - Create: `backend/app/db.py`, `backend/app/models/__init__.py`, `backend/app/models/base.py`, `backend/tests/conftest.py`
+- Modify: `backend/pyproject.toml` (pytest-asyncio 루프 스코프)
 - Test: `backend/tests/test_db.py`
 
 - [ ] **Step 1: 실패하는 테스트 작성**
@@ -339,9 +340,21 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 ```
 
-- [ ] **Step 4: conftest 작성**
+- [ ] **Step 4: pytest-asyncio 루프 스코프 설정 + conftest 작성**
 
-`backend/tests/conftest.py`:
+먼저 `backend/pyproject.toml`의 `[tool.pytest.ini_options]` 블록을 아래로 교체한다.
+
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+```
+
+**이유:** pytest-asyncio 1.x에서 `asyncio_mode = "auto"`만 지정하면 `asyncio_default_fixture_loop_scope`가 `None`(= function 스코프), `asyncio_default_test_loop_scope`가 `function`으로 떨어진다. 그러면 아래 session 스코프 `test_engine`이 만든 async 엔진이 첫 테스트가 끝날 때 닫히는 이벤트 루프에 묶여, 두 번째 테스트부터 asyncpg/SQLAlchemy가 "attached to a different loop" 계열 오류를 낸다. 실측 결과 두 키를 **모두** `"session"`으로 지정해야 fixture와 test가 같은 루프를 공유한다 (`asyncio_default_fixture_loop_scope`만으로는 불충분).
+
+그다음 `backend/tests/conftest.py`:
 
 ```python
 import httpx
