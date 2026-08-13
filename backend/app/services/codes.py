@@ -18,13 +18,13 @@ def assert_valid_code(
 
 
 async def load_active_codes(session: AsyncSession, group_code: str) -> set[str]:
-    group = (
-        await session.execute(select(CodeGroup).where(CodeGroup.group_code == group_code))
+    group_id = (
+        await session.execute(select(CodeGroup.id).where(CodeGroup.group_code == group_code))
     ).scalar_one_or_none()
-    if group is None:
+    if group_id is None:
         raise ValidationError("UNKNOWN_CODE_GROUP", f"존재하지 않는 코드그룹입니다: {group_code}")
 
     rows = await session.execute(
-        select(Code.code).where(Code.group_id == group.id, Code.is_active.is_(True))
+        select(Code.code).where(Code.group_id == group_id, Code.is_active.is_(True))
     )
     return set(rows.scalars().all())
