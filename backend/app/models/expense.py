@@ -56,6 +56,8 @@ class ExpenseReport(Base, TimestampMixin):
     )
     fund_center_code: Mapped[str | None] = mapped_column(String(20))
     cost_center_code: Mapped[str | None] = mapped_column(String(20))
+    # 비정규화 값: expense_item.amount_krw 합계와 항상 일치해야 한다.
+    # 서비스 레이어(Task 9 / Phase 3)가 항목 추가·수정·삭제 시마다 재계산해서 갱신할 책임을 진다.
     total_amount_krw: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), nullable=False)
     approver_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

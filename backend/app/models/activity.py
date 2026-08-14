@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Enum as SAEnum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Enum as SAEnum, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.enums import ActivityAction, EntityType, NotificationType
@@ -21,12 +21,17 @@ class Notification(Base, TimestampMixin):
 
 class ActivityLog(Base, TimestampMixin):
     __tablename__ = "activity_log"
+    __table_args__ = (
+        # 타임라인 조회는 항상 entity_type + entity_id로 필터하고 created_at 순으로 읽으므로
+        # 세 컬럼을 모두 포함하는 복합 인덱스 하나로 커버한다 (단일 컬럼 인덱스 두 개 대신).
+        Index("ix_activity_log_entity", "entity_type", "entity_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     entity_type: Mapped[EntityType] = mapped_column(
-        SAEnum(EntityType, name="entity_type"), nullable=False, index=True
+        SAEnum(EntityType, name="entity_type"), nullable=False
     )
-    entity_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
     actor_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     action: Mapped[ActivityAction] = mapped_column(
         SAEnum(ActivityAction, name="activity_action"), nullable=False

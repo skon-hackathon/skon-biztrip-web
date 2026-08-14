@@ -1,7 +1,9 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.enums import (
     ActivityAction,
@@ -111,6 +113,82 @@ async def test_card_transaction_and_expense_item_link(db_session):
     assert item.fund_center_code is None
     assert item.cost_center_code is None
     assert item.is_excluded is False
+
+
+async def test_expense_item_unique_constraint_on_report_and_card_transaction(db_session):
+    user, trip = await _fixture_trip(db_session)
+
+    card = CorporateCard(user_id=user.id, card_no_masked="1111-****-****-2222", brand="BC")
+    db_session.add(card)
+    await db_session.flush()
+
+    txn = CardTransaction(
+        card_id=card.id,
+        approved_at=datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc),
+        merchant_name="서산주유소",
+        merchant_category_code="FUEL",
+        amount=Decimal("50000"),
+        currency_code="KRW",
+        amount_krw=Decimal("50000"),
+    )
+    db_session.add(txn)
+    await db_session.flush()
+
+    report = ExpenseReport(report_no="EX-2026-0801", trip_id=trip.id, user_id=user.id)
+    db_session.add(report)
+    await db_session.flush()
+
+    # PostgreSQL은 NULL을 서로 다른 값으로 취급하므로 card_transaction_id가 NULL인
+    # 수기 입력 항목은 같은 보고서에 여러 개 있어도 유니크 제약에 걸리지 않는다.
+    db_session.add(
+        ExpenseItem(
+            report_id=report.id,
+            card_transaction_id=None,
+            expense_category_code="MEAL",
+            amount_krw=Decimal("10000"),
+        )
+    )
+    db_session.add(
+        ExpenseItem(
+            report_id=report.id,
+            card_transaction_id=None,
+            expense_category_code="MEAL",
+            amount_krw=Decimal("12000"),
+        )
+    )
+    await db_session.flush()
+
+    null_items = (
+        await db_session.execute(
+            select(ExpenseItem).where(
+                ExpenseItem.report_id == report.id, ExpenseItem.card_transaction_id.is_(None)
+            )
+        )
+    ).scalars().all()
+    assert len(null_items) == 2
+
+    # 같은 카드 거래를 같은 보고서에 두 번 연결하면 유니크 제약을 위반해야 한다.
+    db_session.add(
+        ExpenseItem(
+            report_id=report.id,
+            card_transaction_id=txn.id,
+            expense_category_code="FUEL",
+            amount_krw=Decimal("50000"),
+        )
+    )
+    await db_session.flush()
+
+    db_session.add(
+        ExpenseItem(
+            report_id=report.id,
+            card_transaction_id=txn.id,
+            expense_category_code="FUEL",
+            amount_krw=Decimal("50000"),
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+    await db_session.rollback()
 
 
 async def test_api_key_stores_hash_and_scopes(db_session):
