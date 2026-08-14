@@ -1595,6 +1595,7 @@ class ExpenseReport(Base, TimestampMixin):
     )
     fund_center_code: Mapped[str | None] = mapped_column(String(20))
     cost_center_code: Mapped[str | None] = mapped_column(String(20))
+    # 비정규화 값. expense_item.amount_krw 합계와 서비스 레이어가 직접 동기화해야 한다.
     total_amount_krw: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), nullable=False)
     approver_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1651,7 +1652,7 @@ class ApiKey(Base, TimestampMixin):
 `backend/app/models/activity.py`:
 
 ```python
-from sqlalchemy import Boolean, Enum as SAEnum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Enum as SAEnum, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.enums import ActivityAction, EntityType, NotificationType
@@ -1674,12 +1675,16 @@ class Notification(Base, TimestampMixin):
 
 class ActivityLog(Base, TimestampMixin):
     __tablename__ = "activity_log"
+    # 타임라인 조회는 항상 (entity_type, entity_id)로 좁힌 뒤 시간순으로 읽는다.
+    # 단일 컬럼 인덱스 두 개로는 entity_type의 카디널리티가 낮아 플래너가 entity_id
+    # 인덱스만 쓰고 entity_type을 사후 필터로 버린다. 복합 인덱스로 묶는다.
+    __table_args__ = (Index("ix_activity_log_entity", "entity_type", "entity_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     entity_type: Mapped[EntityType] = mapped_column(
-        SAEnum(EntityType, name="entity_type"), nullable=False, index=True
+        SAEnum(EntityType, name="entity_type"), nullable=False
     )
-    entity_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
     actor_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     action: Mapped[ActivityAction] = mapped_column(
         SAEnum(ActivityAction, name="activity_action"), nullable=False
@@ -1722,6 +1727,15 @@ __all__ = [
     "User",
 ]
 ```
+
+- [ ] **Step 6b: 유니크 제약의 거부 절반을 회귀 테스트로 남기기**
+
+`uq_expense_item_report_txn`은 한 카드거래가 여러 정산항목에 이중 계상되는 것을 막는 유일한 장치이고, Phase 3의 자동매칭 설계 전체가 이 불변식에 기댄다. 그런데 Task 9 시드는 `used_txn_ids`로 거래 재사용을 애초에 피하므로 이 제약의 *거부* 동작을 아무도 검증하지 않는다. `tests/test_models_expense.py`에 양쪽 절반을 모두 테스트로 남긴다.
+
+- 같은 리포트에 `card_transaction_id = None`인 항목 두 개 → 둘 다 삽입 성공 (PostgreSQL에서 NULL은 충돌하지 않는다)
+- 같은 리포트에 같은 non-null `card_transaction_id` 두 번 → `IntegrityError`
+
+`IntegrityError`는 `sqlalchemy.exc`에서 가져온다. `IntegrityError` 발생 후 세션은 실패 상태가 되므로, 거부 케이스를 테스트 마지막에 두거나 `pytest.raises` 블록 뒤에 `await db_session.rollback()`으로 세이브포인트까지 되감는다 (`db_session` 픽스처는 `join_transaction_mode="create_savepoint"`라 정상 복구된다). **픽스처 자체는 수정하지 않는다** — 이전 리뷰에서 이미 보강된 것이다.
 
 - [ ] **Step 7: 테스트 통과 확인**
 
