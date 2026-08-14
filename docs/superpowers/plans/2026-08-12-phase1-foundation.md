@@ -1180,6 +1180,13 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.services.trip_stat
 `backend/app/services/trip_status.py`:
 
 ```python
+"""출장 상태전이의 **합법성**만 판단한다.
+
+누가 전이시킬 수 있는지(권한)와 전이에 붙는 조건은 여기서 다루지 않는다.
+예를 들어 `APPROVED → COMPLETED`는 `end_date`가 과거여야 하고, 승인은 배정된
+결재자만 할 수 있다. 그런 규칙은 Phase 2의 서비스 함수가 담당한다.
+"""
+
 from app.enums import TripStatus
 from app.errors import ConflictError
 
@@ -1191,6 +1198,10 @@ ALLOWED_TRANSITIONS: dict[TripStatus, frozenset[TripStatus]] = {
     TripStatus.COMPLETED: frozenset({TripStatus.SETTLED}),
     TripStatus.SETTLED: frozenset(),
 }
+
+_missing = set(TripStatus) - set(ALLOWED_TRANSITIONS)
+if _missing:
+    raise RuntimeError(f"ALLOWED_TRANSITIONS missing entries for {_missing}")
 
 
 def can_transition(current: TripStatus, target: TripStatus) -> bool:
@@ -1204,6 +1215,10 @@ def assert_trip_transition(current: TripStatus, target: TripStatus) -> None:
             f"{current} 상태에서 {target} 로 변경할 수 없습니다",
         )
 ```
+
+`can_transition`은 `ALLOWED_TRANSITIONS[current]`로 직접 인덱싱한다. 테이블에 없는 값이 들어오면 `KeyError`가 그대로 올라가 catch-all 핸들러의 `500 INTERNAL_ERROR`가 되어, 의도한 `409 TRIP_INVALID_TRANSITION` 대신 Agent가 재시도 판단을 못 하게 된다. 위 완전성 검사가 import 시점에 터지므로 유효한 `TripStatus`에 대해서는 이 경로가 발생할 수 없다. `assert`는 `python -O`에서 제거되고 `.get(current, frozenset())`은 버그를 "전이 가능 상태 없음"이라는 잘못된 409로 조용히 바꾸므로 둘 다 쓰지 않는다.
+
+전이 표는 6×6 = 36개 순서쌍을 전수 테스트로 덮는다. 손으로 고른 부분집합만 검증하면 `APPROVED`에 `REJECTED`를 잘못 추가하는 식의 오타가 전 테스트를 통과한다. 기대 집합은 `ALLOWED_TRANSITIONS`에서 유도하지 말고 테스트 파일에 리터럴로 따로 적는다 — 유도하면 동어반복이 되어 검증 의미가 사라진다.
 
 - [ ] **Step 4: 상태전이 테스트 통과 확인**
 
@@ -3861,3 +3876,16 @@ git commit -m "docs: add README with local development instructions"
 - [ ] 시드 데이터가 spec 5.9의 수량과 일치
 
 Phase 1이 끝나면 Phase 2(출장) plan을 작성한다.
+
+
+---
+
+## Phase 2로 넘기는 항목 (Task 7 리뷰에서 확정)
+
+Phase 1 리뷰 과정에서 "여기가 아니라 Phase 2에서 해야 한다"고 판단된 것들. Phase 2 plan을 쓸 때 반드시 반영한다.
+
+- **`validate_codes` 오케스트레이터** — 출장 생성 엔드포인트는 `purpose_code` · `destination_type_code` · `country_code` · `transport_code` · `accommodation_code` 다섯 개를 한 요청에서 검증한다. `load_active_codes` + `assert_valid_code` 쌍을 다섯 번 반복하면 그룹명과 `field=` 문자열을 잘못 짝지을 위험이 있으므로, `asyncio.gather`로 묶는 오케스트레이터를 `app/services/codes.py`에 추가한다. 도입 근거는 성능이 아니라 호출부 실수 방지다 (측정치: 출장 1건 검증 ~15-19ms).
+- **교차 필드 제약은 서비스에서** — `end_date >= start_date`, `estimated_cost >= 0`, 반려 시 `reject_reason` 필수. 모델에 `CheckConstraint`를 걸지 않았으므로 생성·반려 서비스 함수가 반드시 검증해야 한다. 모델이 막아줄 거라고 가정하지 말 것.
+- **전이 조건·권한 검증** — `trip_status.py`는 합법성만 판단한다. `APPROVED → COMPLETED`의 `end_date` 과거 조건, 승인·반려를 배정된 결재자만 수행할 수 있다는 규칙은 Phase 2 서비스가 별도로 검사한다.
+- **요청자·결재자 이름 직렬화** — `Trip.user_id`/`approver_id`에 `relationship()`이 없는 것은 의도적이다. 출장 상세에 이름을 실을 때 `relationship(lazy="selectin")`을 습관적으로 붙이지 말고 명시적 조인/셀렉트로 가져온다. 이 프로젝트는 의도치 않은 eager loading을 이미 세 번(`198698d`, `afa0203`, `b5925cd`) 되돌린 이력이 있다.
+- **상태 전이 시 이력·알림 기록** — 모든 전이는 서비스의 단일 지점을 통과하며 그 지점에서 `ActivityLog`와 `Notification`을 함께 기록한다. 웹 경로든 API Key 경로든 이력이 빠질 수 없어야 한다.
