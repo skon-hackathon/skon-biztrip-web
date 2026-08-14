@@ -21,8 +21,10 @@ def test_assert_valid_code_rejects_unknown_value():
 
 
 def test_assert_valid_code_rejects_none():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc_info:
         assert_valid_code("TRANSPORT", None, {"AIR"}, field="transport_code")
+
+    assert exc_info.value.code == "INVALID_CODE"
 
 
 async def test_load_active_codes_returns_only_active(db_session):
@@ -41,5 +43,18 @@ async def test_load_active_codes_returns_only_active(db_session):
 async def test_load_active_codes_raises_for_unknown_group(db_session):
     with pytest.raises(ValidationError) as exc_info:
         await load_active_codes(db_session, "NOPE")
+
+    assert exc_info.value.code == "UNKNOWN_CODE_GROUP"
+
+
+async def test_load_active_codes_raises_for_inactive_group(db_session):
+    group = CodeGroup(group_code="RETIRED", name="폐지된 그룹", is_active=False)
+    db_session.add(group)
+    await db_session.flush()
+    db_session.add(Code(group_id=group.id, code="AIR", name="항공", sort_order=1))
+    await db_session.flush()
+
+    with pytest.raises(ValidationError) as exc_info:
+        await load_active_codes(db_session, "RETIRED")
 
     assert exc_info.value.code == "UNKNOWN_CODE_GROUP"
