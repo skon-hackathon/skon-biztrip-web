@@ -1050,8 +1050,21 @@ def assert_valid_code(
 
 
 async def load_active_codes(session: AsyncSession, group_code: str) -> set[str]:
+    """활성 코드그룹의 활성 코드값 집합을 돌려준다.
+
+    엔티티가 아니라 `CodeGroup.id` 컬럼만 고르는 것은 의도적이다. 엔티티를 고르면
+    ORM 객체가 만들어지면서 `lazy="selectin"`인 `CodeGroup.codes`까지 끌려와 쓸모없는
+    세 번째 쿼리가 나간다. 또한 이 2쿼리 구조를 조인 한 방으로 합치면 안 된다.
+    "그룹이 없거나 비활성"(`UNKNOWN_CODE_GROUP`)과 "그룹은 살아있으나 활성 코드가
+    0건"(빈 `set()`)을 구분할 수 없게 되기 때문이다.
+    """
     group_id = (
-        await session.execute(select(CodeGroup.id).where(CodeGroup.group_code == group_code))
+        await session.execute(
+            select(CodeGroup.id).where(
+                CodeGroup.group_code == group_code,
+                CodeGroup.is_active.is_(True),
+            )
+        )
     ).scalar_one_or_none()
     if group_id is None:
         raise ValidationError("UNKNOWN_CODE_GROUP", f"존재하지 않는 코드그룹입니다: {group_code}")
@@ -1061,6 +1074,8 @@ async def load_active_codes(session: AsyncSession, group_code: str) -> set[str]:
     )
     return set(rows.scalars().all())
 ```
+
+비활성 코드그룹은 존재하지 않는 그룹과 동일하게 취급한다. 둘 다 쓰기를 막아야 하고, 별도 에러코드를 만들 이유가 없다. Admin이 코드그룹을 비활성화한 뒤에도 그 그룹의 코드로 쓰기가 통과되는 구멍을 막는다.
 
 **왜 `select(CodeGroup)`이 아니라 `select(CodeGroup.id)`인가.** 엔티티를 가져오면 `CodeGroup.codes`가 `lazy="selectin"`이라 아무도 읽지 않는 코드 목록을 통째로 한 번 더 조회한다 (호출당 3쿼리). 컬럼만 선택하면 ORM 객체가 만들어지지 않아 그 쿼리가 사라진다 (2쿼리).
 
@@ -1081,6 +1096,19 @@ git commit -m "feat(backend): add common code validation service"
 ---
 
 ## Task 7: 출장 모델 + 상태전이 규칙
+
+> **Task 6 리뷰에서 넘어온 권고.** 출장 쓰기 경로는 `purpose_code` · `destination_type_code` · `country_code` · `transport_code` · `accommodation_code` 다섯 개를 한 요청에서 검증해야 한다. 현재 API로는 `load_active_codes` + `assert_valid_code` 쌍이 다섯 번 반복되어, 그룹명과 `field=` 문자열을 잘못 짝지을 위험이 있다. 실제 호출부가 생기는 이 시점에 `app/services/codes.py`에 아래 형태의 오케스트레이터를 추가한다 (Task 6 시점에는 호출부가 없어 투기적이므로 일부러 미뤘다).
+>
+> ```python
+> async def validate_codes(
+>     session: AsyncSession, entries: Sequence[tuple[str, str | None, str]]
+> ) -> None:
+>     results = await asyncio.gather(*(load_active_codes(session, g) for g, _, _ in entries))
+>     for (group_code, value, field), allowed in zip(entries, results):
+>         assert_valid_code(group_code, value, allowed, field=field)
+> ```
+>
+> 호출부가 한 줄로 줄고 다섯 번의 순차 왕복이 동시 실행된다. 측정치상 지연 자체는 문제가 아니었으므로(출장 1건 검증 ~15-19ms), 도입 근거는 성능이 아니라 호출부 실수 방지다.
 
 **Files:**
 - Create: `backend/app/models/trip.py`, `backend/app/services/trip_status.py`
