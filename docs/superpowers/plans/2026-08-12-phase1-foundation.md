@@ -3872,7 +3872,7 @@ git commit -m "docs: add README with local development instructions"
 - [ ] `npm test`, `npm run check`, `npm run build` 전부 통과
 - [ ] Task 18 Step 3의 수동 시나리오 7개 전부 확인
 - [ ] Task 17 Step 5의 4-컨테이너 기동 및 `http://localhost` 로그인 확인
-- [ ] spec의 전체 테이블(16개)이 모델로 존재하고 `create_all`로 생성됨
+- [ ] spec의 전체 테이블(14개: `department` `user` `code_group` `code` `fund_center` `cost_center` `trip` `corporate_card` `card_transaction` `expense_report` `expense_item` `api_key` `notification` `activity_log`)이 모델로 존재하고 `create_all`로 생성됨
 - [ ] 시드 데이터가 spec 5.9의 수량과 일치
 
 Phase 1이 끝나면 Phase 2(출장) plan을 작성한다.
