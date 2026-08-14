@@ -1097,7 +1097,7 @@ git commit -m "feat(backend): add common code validation service"
 
 ## Task 7: 출장 모델 + 상태전이 규칙
 
-> **Task 6 리뷰에서 넘어온 권고.** 출장 쓰기 경로는 `purpose_code` · `destination_type_code` · `country_code` · `transport_code` · `accommodation_code` 다섯 개를 한 요청에서 검증해야 한다. 현재 API로는 `load_active_codes` + `assert_valid_code` 쌍이 다섯 번 반복되어, 그룹명과 `field=` 문자열을 잘못 짝지을 위험이 있다. 실제 호출부가 생기는 이 시점에 `app/services/codes.py`에 아래 형태의 오케스트레이터를 추가한다 (Task 6 시점에는 호출부가 없어 투기적이므로 일부러 미뤘다).
+> **Task 6 리뷰에서 넘어온 권고 — 이 태스크가 아니라 Phase 2에서 처리한다.** 출장 쓰기 경로는 `purpose_code` · `destination_type_code` · `country_code` · `transport_code` · `accommodation_code` 다섯 개를 한 요청에서 검증해야 하고, 현재 API로는 `load_active_codes` + `assert_valid_code` 쌍이 다섯 번 반복되어 그룹명과 `field=` 문자열을 잘못 짝지을 위험이 있다. 다만 **Task 7은 모델과 상태전이 표만 만들고 라우터·생성 엔드포인트를 만들지 않으므로 여기에도 실제 호출부가 없다.** 따라서 아래 오케스트레이터는 출장 생성 엔드포인트가 실제로 생기는 Phase 2에서 도입한다.
 >
 > ```python
 > async def validate_codes(
@@ -1108,7 +1108,7 @@ git commit -m "feat(backend): add common code validation service"
 >         assert_valid_code(group_code, value, allowed, field=field)
 > ```
 >
-> 호출부가 한 줄로 줄고 다섯 번의 순차 왕복이 동시 실행된다. 측정치상 지연 자체는 문제가 아니었으므로(출장 1건 검증 ~15-19ms), 도입 근거는 성능이 아니라 호출부 실수 방지다.
+> 호출부가 한 줄로 줄고 다섯 번의 순차 왕복이 동시 실행된다. 측정치상 지연 자체는 문제가 아니었으므로(출장 1건 검증 ~15-19ms, 40건 시드 ~570ms), 도입 근거는 성능이 아니라 호출부 실수 방지다.
 
 **Files:**
 - Create: `backend/app/models/trip.py`, `backend/app/services/trip_status.py`
