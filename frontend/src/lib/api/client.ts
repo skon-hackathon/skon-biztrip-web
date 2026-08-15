@@ -37,7 +37,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 			const parsed = await response.json();
 			if (parsed?.error?.code) {
 				code = parsed.error.code;
-				message = parsed.error.message;
+				message = parsed.error.message ?? message;
 				field = parsed.error.field ?? null;
 			}
 		} catch {
@@ -47,5 +47,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 	}
 
 	if (response.status === 204) return undefined as T;
-	return (await response.json()) as T;
+	try {
+		return (await response.json()) as T;
+	} catch {
+		throw new ApiError(response.status, 'INVALID_RESPONSE', '서버 응답을 처리할 수 없습니다');
+	}
 }

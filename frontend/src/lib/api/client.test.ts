@@ -27,6 +27,25 @@ describe('request', () => {
 		expect(init.headers.Authorization).toBeUndefined();
 	});
 
+	it('returns the parsed JSON body typed through', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ status: 'ok' }));
+
+		const result = await request<{ status: string }>('/api/v1/health', { fetchImpl: fetchMock });
+
+		expect(result).toEqual({ status: 'ok' });
+	});
+
+	it('returns undefined for a 204 without parsing a body', async () => {
+		const response = new Response(null, { status: 204 });
+		const jsonSpy = vi.spyOn(response, 'json');
+		const fetchMock = vi.fn().mockResolvedValue(response);
+
+		const result = await request('/api/v1/health', { method: 'DELETE', fetchImpl: fetchMock });
+
+		expect(result).toBeUndefined();
+		expect(jsonSpy).not.toHaveBeenCalled();
+	});
+
 	it('throws ApiError carrying the unified error body', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			jsonResponse(
@@ -50,5 +69,15 @@ describe('request', () => {
 		expect(error).toBeInstanceOf(ApiError);
 		expect(error.status).toBe(502);
 		expect(error.code).toBe('UNKNOWN');
+	});
+
+	it('throws ApiError, not a SyntaxError, when a success body is not valid JSON', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response('not json', { status: 200 }));
+
+		const error = await request<never>('/api/v1/health', { fetchImpl: fetchMock }).catch((e) => e);
+
+		expect(error).toBeInstanceOf(ApiError);
+		expect(error.status).toBe(200);
+		expect(error.code).toBe('INVALID_RESPONSE');
 	});
 });

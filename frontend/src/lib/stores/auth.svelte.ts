@@ -25,13 +25,18 @@ class AuthStore {
 	}
 
 	async login(email: string, password: string): Promise<void> {
-		const result = await request<LoginResponse>('/api/v1/auth/login', {
-			method: 'POST',
-			body: { email, password }
-		});
-		this.token = result.access_token;
-		this.user = result.user;
-		localStorage.setItem(TOKEN_KEY, result.access_token);
+		this.loading = true;
+		try {
+			const result = await request<LoginResponse>('/api/v1/auth/login', {
+				method: 'POST',
+				body: { email, password }
+			});
+			this.token = result.access_token;
+			this.user = result.user;
+			localStorage.setItem(TOKEN_KEY, result.access_token);
+		} finally {
+			this.loading = false;
+		}
 	}
 
 	clear(): void {
