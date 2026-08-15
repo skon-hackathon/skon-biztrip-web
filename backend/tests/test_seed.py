@@ -8,6 +8,7 @@ from app.models import (
     CorporateCard,
     CostCenter,
     Department,
+    ExpenseItem,
     ExpenseReport,
     FundCenter,
     Trip,
@@ -32,17 +33,38 @@ async def test_seed_creates_expected_master_data(db_session):
     assert await _count(db_session, Trip) == 40
     assert await _count(db_session, ExpenseReport) == 12
     assert await _count(db_session, CardTransaction) >= 600
+    assert await _count(db_session, ExpenseItem) >= 24
 
 
 async def test_seed_is_idempotent(db_session):
     await seed_all(db_session)
     first_users = await _count(db_session, User)
     first_txns = await _count(db_session, CardTransaction)
+    first_trips = await _count(db_session, Trip)
+    first_reports = await _count(db_session, ExpenseReport)
 
     await seed_all(db_session)
 
     assert await _count(db_session, User) == first_users
     assert await _count(db_session, CardTransaction) == first_txns
+    assert await _count(db_session, Trip) == first_trips
+    assert await _count(db_session, ExpenseReport) == first_reports
+
+
+async def test_seed_expense_report_totals_match_items(db_session):
+    await seed_all(db_session)
+
+    reports = (await db_session.execute(select(ExpenseReport))).scalars().all()
+    assert reports, "expected at least one seeded expense report"
+    for report in reports:
+        total = (
+            await db_session.execute(
+                select(func.coalesce(func.sum(ExpenseItem.amount_krw), 0)).where(
+                    ExpenseItem.report_id == report.id
+                )
+            )
+        ).scalar_one()
+        assert total == report.total_amount_krw
 
 
 async def test_seed_creates_one_admin_and_three_managers(db_session):

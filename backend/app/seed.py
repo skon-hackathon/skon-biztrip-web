@@ -139,6 +139,8 @@ COST_CENTERS = [
     ("CC2100", "전사 공통", None),
 ]
 
+TRIP_PURPOSE_LABELS = {code: label for code, label, _ in CODE_GROUPS["TRIP_PURPOSE"][1]}
+
 DOMESTIC_CITIES = ["울산", "서산", "대전", "광주", "포항", "청주"]
 OVERSEAS = [("US", "Atlanta"), ("CN", "Yancheng"), ("HU", "Iváncsa"), ("DE", "München"), ("JP", "Osaka")]
 MERCHANTS = {
@@ -170,7 +172,9 @@ async def _seed_codes(session: AsyncSession) -> None:
 
 
 async def _seed_org(session: AsyncSession) -> dict[str, Department]:
-    existing = (await session.execute(select(Department))).scalars().all()
+    existing = (
+        (await session.execute(select(Department).order_by(Department.id))).scalars().all()
+    )
     if existing:
         return {d.code: d for d in existing}
 
@@ -184,25 +188,27 @@ async def _seed_org(session: AsyncSession) -> dict[str, Department]:
 
 
 async def _seed_centers(session: AsyncSession, depts: dict[str, Department]) -> None:
-    if await _is_seeded(session, FundCenter):
-        return
-    for code, name, dept_code in FUND_CENTERS:
-        session.add(
-            FundCenter(
-                code=code, name=name, department_id=depts[dept_code].id if dept_code else None
+    # FundCenter와 CostCenter는 서로 독립적으로 채워진 상태일 수 있으므로
+    # 각각 자신의 테이블만 보고 판단한다 (하나만 보고 둘 다 건너뛰면 안 됨).
+    if not await _is_seeded(session, FundCenter):
+        for code, name, dept_code in FUND_CENTERS:
+            session.add(
+                FundCenter(
+                    code=code, name=name, department_id=depts[dept_code].id if dept_code else None
+                )
             )
-        )
-    for code, name, dept_code in COST_CENTERS:
-        session.add(
-            CostCenter(
-                code=code, name=name, department_id=depts[dept_code].id if dept_code else None
+    if not await _is_seeded(session, CostCenter):
+        for code, name, dept_code in COST_CENTERS:
+            session.add(
+                CostCenter(
+                    code=code, name=name, department_id=depts[dept_code].id if dept_code else None
+                )
             )
-        )
     await session.flush()
 
 
 async def _seed_users(session: AsyncSession, depts: dict[str, Department]) -> list[User]:
-    existing = (await session.execute(select(User))).scalars().all()
+    existing = (await session.execute(select(User).order_by(User.id))).scalars().all()
     if existing:
         return list(existing)
 
@@ -339,14 +345,38 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
             transport = rng.choice(["RAIL", "CAR", "BUS"])
             duration = rng.randint(1, 3)
 
-        start = today - timedelta(days=rng.randint(-30, 150))
+        if status in {TripStatus.COMPLETED, TripStatus.SETTLED}:
+            # 반드시 과거여야 한다. 종료일이 오늘 이전이어야 COMPLETED로 갈 수 있고,
+            # 카드거래(최근 180일)와 기간이 겹쳐야 정산 자동매칭 데모가 성립한다.
+            start = today - timedelta(days=rng.randint(duration + 1, 170))
+        elif status == TripStatus.APPROVED:
+            # 승인만 된 출장은 다가오는 일정일 수도, 이미 다녀온 것일 수도 있다.
+            start = today - timedelta(days=rng.randint(-30, 60))
+        else:
+            # DRAFT / SUBMITTED / REJECTED — 아직 확정 전이라 미래가 자연스럽다.
+            start = today - timedelta(days=rng.randint(-45, 30))
         purpose = rng.choice(["CUSTOMER", "SUPPORT", "TRAINING", "CONFERENCE", "AUDIT"])
+
+        submitted_at = None
+        approved_at = None
+        if status != TripStatus.DRAFT:
+            # 시작일보다 며칠 앞서 제출하고, 그로부터 1~2일 뒤 승인되었다고 본다.
+            submitted_at = datetime.combine(
+                start - timedelta(days=rng.randint(3, 10)),
+                datetime.min.time(),
+                tzinfo=timezone.utc,
+            ) + timedelta(hours=rng.randint(9, 18), minutes=rng.choice([0, 15, 30, 45]))
+            if status in {TripStatus.APPROVED, TripStatus.COMPLETED, TripStatus.SETTLED}:
+                approved_at = submitted_at + timedelta(
+                    days=rng.randint(1, 2), hours=rng.randint(0, 8)
+                )
+
         trip = Trip(
             trip_no=f"BT-2026-{index:04d}",
             user_id=author.id,
             title=f"{city} {'해외' if overseas else '국내'}출장",
             purpose_code=purpose,
-            purpose_detail=f"{city} 현장 {purpose} 목적 출장",
+            purpose_detail=f"{city} 현장 {TRIP_PURPOSE_LABELS[purpose]} 목적 출장",
             destination_type_code="OVERSEAS" if overseas else "DOMESTIC",
             country_code=country,
             city=city,
@@ -358,12 +388,8 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
             estimated_cost=Decimal(rng.randrange(200000, 4000000, 10000)),
             status=status,
             approver_id=author.manager_id if status != TripStatus.DRAFT else None,
-            submitted_at=None if status == TripStatus.DRAFT else datetime.now(timezone.utc),
-            approved_at=(
-                datetime.now(timezone.utc)
-                if status in {TripStatus.APPROVED, TripStatus.COMPLETED, TripStatus.SETTLED}
-                else None
-            ),
+            submitted_at=submitted_at,
+            approved_at=approved_at,
             reject_reason="사유 보완 필요" if status == TripStatus.REJECTED else None,
         )
         session.add(trip)
@@ -403,11 +429,12 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
 
 
 async def seed_all(session: AsyncSession) -> None:
-    rng = random.Random(RNG_SEED)
     await _seed_codes(session)
     depts = await _seed_org(session)
     await _seed_centers(session, depts)
     users = await _seed_users(session, depts)
-    await _seed_cards(session, users, rng)
-    await _seed_trips(session, users, rng)
+    # 블록마다 독립 시드를 쓴다. 공용 rng 하나를 돌려쓰면 앞 블록이 early-return으로
+    # 난수를 소비하지 않았을 때 뒤 블록 결과가 통째로 달라진다.
+    await _seed_cards(session, users, random.Random(f"{RNG_SEED}-cards"))
+    await _seed_trips(session, users, random.Random(f"{RNG_SEED}-trips"))
     await session.commit()
