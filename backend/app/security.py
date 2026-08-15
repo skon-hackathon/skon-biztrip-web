@@ -32,5 +32,5 @@ def decode_access_token(token: str) -> int:
         return int(payload["sub"])
     except jwt.ExpiredSignatureError as exc:
         raise AuthError("TOKEN_EXPIRED", "토큰이 만료되었습니다") from exc
-    except (jwt.PyJWTError, KeyError, ValueError) as exc:
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError) as exc:
         raise AuthError("INVALID_TOKEN", "유효하지 않은 토큰입니다") from exc

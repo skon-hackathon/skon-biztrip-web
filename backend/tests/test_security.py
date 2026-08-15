@@ -74,3 +74,14 @@ def test_decode_rejects_token_with_non_numeric_sub():
         decode_access_token(token)
 
     assert exc_info.value.code == "INVALID_TOKEN"
+
+
+def test_decode_rejects_token_with_non_scalar_exp():
+    settings = get_settings()
+    payload = {"sub": "1", "exp": [1, 2, 3]}
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+    with pytest.raises(AuthError) as exc_info:
+        decode_access_token(token)
+
+    assert exc_info.value.code == "INVALID_TOKEN"
