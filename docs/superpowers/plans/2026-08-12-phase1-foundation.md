@@ -3620,6 +3620,7 @@ git commit -m "feat(frontend): add app shell with top-nav and product tabs"
 
 	async function handleSubmit(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
+		if (submitting) return;
 		errorMessage = '';
 		submitting = true;
 		try {
@@ -4074,6 +4075,12 @@ Phase 1 리뷰 과정에서 "여기가 아니라 Phase 2에서 해야 한다"고
 
 - **`request.state.scopes`는 `UNRESTRICTED` 센티널과 비교한다.** `app/deps.py`가 JWT 인증 시 `request.state.scopes = UNRESTRICTED`(전용 센티널 객체)를 넣는다. Phase 4의 스코프 검사기는 이 값을 **센티널과 동일성 비교**해야 하며, `getattr(request.state, "scopes", None)`처럼 기본값을 두고 "값이 없으면 통과" 식으로 쓰면 안 된다. 처음에는 `None`을 "제한 없음"으로 썼는데, 그러면 "제한 없음"과 "`get_principal`이 아예 실행되지 않음"이 구분되지 않아, 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는 fail-open이 된다.
 - **상태 전이 시 이력·알림 기록** — 모든 전이는 서비스의 단일 지점을 통과하며 그 지점에서 `ActivityLog`와 `Notification`을 함께 기록한다. 웹 경로든 API Key 경로든 이력이 빠질 수 없어야 한다.
+
+### 로그인·가드 이월 (Task 16 리뷰에서 확정)
+
+- **딥링크가 로그인 과정에서 유실된다.** 미로그인 상태로 `/trips/42`에 접근하면 `/login`으로 튕기고, 로그인 후에는 하드코딩된 `/`로 간다. 지금은 그런 라우트가 없어 무해하지만, 공유 가능한 출장 링크가 생기는 Phase에서 반드시 걸린다. 수정은 가드의 리다이렉트를 `goto('/login?redirect=' + encodeURIComponent(page.url.pathname + page.url.search))`로 바꾸고, 로그인 성공 후 `goto(page.url.searchParams.get('redirect') ?? '/')`로 돌려보내면 된다.
+- **`PUBLIC_PATHS`는 정확 일치 배열이다.** `/login?query`는 pathname만 비교하므로 정상 동작하지만, `/login/reset`처럼 공개 라우트 **아래**에 있는 경로는 공개로 취급되지 않고 조용히 `/login`으로 리다이렉트된다. 자식을 갖는 공개 라우트(예: 개발자 API 가이드)가 생기는 시점에 접두사 인식 방식으로 바꾼다. 목록에 추가하는 것을 잊으면 실패가 조용하다는 점이 이 방식의 위험이다.
+- **중복 제출 가드는 폼마다 필요하다.** 로그인 폼의 `if (submitting) return;`은 로그인 자체보다 **원형으로서** 중요하다. 버튼의 `disabled`만으로는 `form.requestSubmit()`을 두 번 부르는 경로를 막지 못한다(실측 2회 요청). 출장 신청·정산 제출처럼 멱등하지 않은 폼에서는 중복 POST가 곧 중복 레코드이므로, 새 폼을 만들 때마다 이 가드를 넣는다.
 
 ### 앱 셸 이월 (Task 15 리뷰에서 확정)
 
