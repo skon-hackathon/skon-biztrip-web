@@ -3422,7 +3422,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 			const parsed = await response.json();
 			if (parsed?.error?.code) {
 				code = parsed.error.code;
-				message = parsed.error.message;
+				message = parsed.error.message ?? message;
 				field = parsed.error.field ?? null;
 			}
 		} catch {
@@ -3432,9 +3432,15 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 	}
 
 	if (response.status === 204) return undefined as T;
-	return (await response.json()) as T;
+	try {
+		return (await response.json()) as T;
+	} catch {
+		throw new ApiError(response.status, 'INVALID_RESPONSE', '서버 응답을 처리할 수 없습니다');
+	}
 }
 ```
+
+**성공 경로의 파싱도 감싸야 하는 이유.** 에러 경로만 `try/catch`로 감싸면, 본문이 깨진 200 응답에서 `ApiError`가 아니라 raw `SyntaxError`가 튀어나간다. Phase 2 이후 수십 개 호출부가 "`request()`의 실패는 항상 `ApiError`"라는 불변식에 기대어 `if (e instanceof ApiError) ... else rethrow` 형태로 쓸 것이므로, 이 불변식이 깨지면 처리되지 않은 예외가 UI로 새어나간다.
 
 - [ ] **Step 6: 인증 스토어 구현**
 
@@ -4066,6 +4072,13 @@ Phase 1 리뷰 과정에서 "여기가 아니라 Phase 2에서 해야 한다"고
 
 - **`request.state.scopes`는 `UNRESTRICTED` 센티널과 비교한다.** `app/deps.py`가 JWT 인증 시 `request.state.scopes = UNRESTRICTED`(전용 센티널 객체)를 넣는다. Phase 4의 스코프 검사기는 이 값을 **센티널과 동일성 비교**해야 하며, `getattr(request.state, "scopes", None)`처럼 기본값을 두고 "값이 없으면 통과" 식으로 쓰면 안 된다. 처음에는 `None`을 "제한 없음"으로 썼는데, 그러면 "제한 없음"과 "`get_principal`이 아예 실행되지 않음"이 구분되지 않아, 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는 fail-open이 된다.
 - **상태 전이 시 이력·알림 기록** — 모든 전이는 서비스의 단일 지점을 통과하며 그 지점에서 `ActivityLog`와 `Notification`을 함께 기록한다. 웹 경로든 API Key 경로든 이력이 빠질 수 없어야 한다.
+
+### 프론트엔드 데이터 계층 이월 (Task 14 리뷰에서 확정)
+
+Phase 2의 **첫 인증 화면을 만들 때** 아래 둘을 같이 처리한다. 지금은 호출부가 `login`과 `restore` 둘뿐이라 투기적이므로 미뤘다.
+
+- **`authRequest` 래퍼** — `request()`의 `token`은 선택 파라미터라 인증이 필요한 호출부마다 `{ token: auth.token }`를 손으로 붙여야 한다. 출장·정산·관리자·API Key 화면에서 수십 곳이 생기는데, 하나라도 빠뜨리면 조용히 미인증 요청이 나가 401이 뜨고, 호출부에서는 진짜 인증 실패와 구분되지 않는다. 컴파일 타임 신호도 없다. `auth.svelte.ts`에 `token`을 `auth.token`으로 기본 채우는 4줄짜리 래퍼를 두고, 인증이 필요한 호출은 전부 그걸 쓰는 것을 관례로 삼는다. 미인증 호출부(`login`, 그리고 명시적으로 토큰을 넘기는 `restore`)만 raw `request`를 쓴다.
+- **전역 401 처리** — JWT는 8시간 만료이고 refresh 토큰이 없다. 세션 중간에 만료되면 `auth.token`·`auth.user`가 그대로 남아 헤더에 이름이 계속 보이는데, 어떤 코드도 상태를 정리하지 않는다. SPA 내비게이션은 `onMount`를 다시 태우지 않으므로 전체 새로고침 전까지 자가 복구가 안 된다. 위 래퍼 안에서 `ApiError`의 `status === 401`을 잡아 `auth.clear()` 후 `/login`으로 보내면 `if` 하나로 끝난다. refresh 토큰 기구는 만들지 않는다.
 
 ### 보안 관련 이월 (Task 10 리뷰에서 확정)
 
