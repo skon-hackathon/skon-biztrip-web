@@ -13,7 +13,8 @@
 	];
 
 	function isActive(href: string): boolean {
-		return page.url.pathname.startsWith(href);
+		const path = page.url.pathname;
+		return path === href || path.startsWith(`${href}/`);
 	}
 
 	function signOut(): void {
@@ -23,15 +24,16 @@
 </script>
 
 <div class="min-h-screen bg-canvas">
-	<header class="flex h-20 items-center border-b border-hairline px-8">
-		<a href="/" class="flex items-center">
+	<header class="grid h-20 grid-cols-[1fr_auto_1fr] items-center border-b border-hairline px-8">
+		<a href="/" class="flex items-center justify-self-start">
 			<img src="/skon-logo.png" alt="SK온 출장시스템" class="h-8 w-auto" />
 		</a>
 
-		<nav class="mx-auto flex items-center gap-8">
+		<nav aria-label="주 메뉴" class="flex items-center justify-self-center gap-8">
 			{#each tabs as tab (tab.href)}
 				<a
 					href={tab.href}
+					aria-current={isActive(tab.href) ? 'page' : undefined}
 					class="pb-1 text-nav-link {isActive(tab.href)
 						? 'border-b-2 border-ink text-ink'
 						: 'text-muted hover:text-ink'}"
@@ -41,7 +43,7 @@
 			{/each}
 		</nav>
 
-		<div class="flex items-center gap-4">
+		<div class="flex items-center justify-self-end gap-4">
 			{#if auth.user}
 				<span class="text-body-sm text-muted">{auth.user.name} · {auth.user.department_name}</span>
 				<button
