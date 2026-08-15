@@ -1764,9 +1764,11 @@ git commit -m "feat(backend): add card, expense, api key, and activity models"
 `backend/tests/test_seed.py`:
 
 ```python
-from sqlalchemy import func, select
+from datetime import timedelta
 
-from app.enums import UserRole
+from sqlalchemy import DateTime, cast, func, select
+
+from app.enums import TripStatus, UserRole
 from app.models import (
     CardTransaction,
     Code,
@@ -1774,6 +1776,7 @@ from app.models import (
     CorporateCard,
     CostCenter,
     Department,
+    ExpenseItem,
     ExpenseReport,
     FundCenter,
     Trip,
@@ -1798,17 +1801,73 @@ async def test_seed_creates_expected_master_data(db_session):
     assert await _count(db_session, Trip) == 40
     assert await _count(db_session, ExpenseReport) == 12
     assert await _count(db_session, CardTransaction) >= 600
+    assert await _count(db_session, ExpenseItem) >= 24
 
 
 async def test_seed_is_idempotent(db_session):
     await seed_all(db_session)
     first_users = await _count(db_session, User)
     first_txns = await _count(db_session, CardTransaction)
+    first_trips = await _count(db_session, Trip)
+    first_reports = await _count(db_session, ExpenseReport)
 
     await seed_all(db_session)
 
     assert await _count(db_session, User) == first_users
     assert await _count(db_session, CardTransaction) == first_txns
+    assert await _count(db_session, Trip) == first_trips
+    assert await _count(db_session, ExpenseReport) == first_reports
+
+
+async def test_seed_expense_report_totals_match_items(db_session):
+    await seed_all(db_session)
+
+    reports = (await db_session.execute(select(ExpenseReport))).scalars().all()
+    assert reports, "expected at least one seeded expense report"
+    for report in reports:
+        total = (
+            await db_session.execute(
+                select(func.coalesce(func.sum(ExpenseItem.amount_krw), 0)).where(
+                    ExpenseItem.report_id == report.id
+                )
+            )
+        ).scalar_one()
+        assert total == report.total_amount_krw
+
+
+async def test_seed_completed_or_settled_trips_have_a_matching_card_transaction(db_session):
+    """Phase 3 자동매칭 데모가 성립하려면, COMPLETED/SETTLED 상태인 모든 출장에 대해
+    저자 본인 카드에서 발생한 취소되지 않은 카드거래가 출장 기간(start_date~end_date,
+    당일 전체 포함) 안에 최소 1건 존재해야 한다. Date와 timestamptz 경계를 명시적으로
+    UTC로 맞춰 비교한다 — 그냥 <= end_date로 비교하면 종료일 당일 자정 이후 거래가
+    잘려나간다."""
+    await seed_all(db_session)
+
+    window_start = func.timezone("UTC", cast(Trip.start_date, DateTime))
+    window_end_exclusive = func.timezone("UTC", cast(Trip.end_date, DateTime)) + timedelta(days=1)
+
+    has_match = (
+        select(CardTransaction.id)
+        .join(CorporateCard, CorporateCard.id == CardTransaction.card_id)
+        .where(
+            CorporateCard.user_id == Trip.user_id,
+            CardTransaction.is_cancelled.is_(False),
+            CardTransaction.approved_at >= window_start,
+            CardTransaction.approved_at < window_end_exclusive,
+        )
+        .exists()
+    )
+
+    missing = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(Trip)
+            .where(Trip.status.in_([TripStatus.COMPLETED, TripStatus.SETTLED]))
+            .where(~has_match)
+        )
+    ).scalar_one()
+
+    assert missing == 0
 
 
 async def test_seed_creates_one_admin_and_three_managers(db_session):
@@ -1991,6 +2050,8 @@ COST_CENTERS = [
     ("CC2100", "전사 공통", None),
 ]
 
+TRIP_PURPOSE_LABELS = {code: label for code, label, _ in CODE_GROUPS["TRIP_PURPOSE"][1]}
+
 DOMESTIC_CITIES = ["울산", "서산", "대전", "광주", "포항", "청주"]
 OVERSEAS = [("US", "Atlanta"), ("CN", "Yancheng"), ("HU", "Iváncsa"), ("DE", "München"), ("JP", "Osaka")]
 MERCHANTS = {
@@ -2022,7 +2083,9 @@ async def _seed_codes(session: AsyncSession) -> None:
 
 
 async def _seed_org(session: AsyncSession) -> dict[str, Department]:
-    existing = (await session.execute(select(Department))).scalars().all()
+    existing = (
+        (await session.execute(select(Department).order_by(Department.id))).scalars().all()
+    )
     if existing:
         return {d.code: d for d in existing}
 
@@ -2036,25 +2099,27 @@ async def _seed_org(session: AsyncSession) -> dict[str, Department]:
 
 
 async def _seed_centers(session: AsyncSession, depts: dict[str, Department]) -> None:
-    if await _is_seeded(session, FundCenter):
-        return
-    for code, name, dept_code in FUND_CENTERS:
-        session.add(
-            FundCenter(
-                code=code, name=name, department_id=depts[dept_code].id if dept_code else None
+    # FundCenter와 CostCenter는 서로 독립적으로 채워진 상태일 수 있으므로
+    # 각각 자신의 테이블만 보고 판단한다 (하나만 보고 둘 다 건너뛰면 안 됨).
+    if not await _is_seeded(session, FundCenter):
+        for code, name, dept_code in FUND_CENTERS:
+            session.add(
+                FundCenter(
+                    code=code, name=name, department_id=depts[dept_code].id if dept_code else None
+                )
             )
-        )
-    for code, name, dept_code in COST_CENTERS:
-        session.add(
-            CostCenter(
-                code=code, name=name, department_id=depts[dept_code].id if dept_code else None
+    if not await _is_seeded(session, CostCenter):
+        for code, name, dept_code in COST_CENTERS:
+            session.add(
+                CostCenter(
+                    code=code, name=name, department_id=depts[dept_code].id if dept_code else None
+                )
             )
-        )
     await session.flush()
 
 
 async def _seed_users(session: AsyncSession, depts: dict[str, Department]) -> list[User]:
-    existing = (await session.execute(select(User))).scalars().all()
+    existing = (await session.execute(select(User).order_by(User.id))).scalars().all()
     if existing:
         return list(existing)
 
@@ -2191,14 +2256,38 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
             transport = rng.choice(["RAIL", "CAR", "BUS"])
             duration = rng.randint(1, 3)
 
-        start = today - timedelta(days=rng.randint(-30, 150))
+        if status in {TripStatus.COMPLETED, TripStatus.SETTLED}:
+            # 반드시 과거여야 한다. 종료일이 오늘 이전이어야 COMPLETED로 갈 수 있고,
+            # 카드거래(최근 180일)와 기간이 겹쳐야 정산 자동매칭 데모가 성립한다.
+            start = today - timedelta(days=rng.randint(duration + 1, 170))
+        elif status == TripStatus.APPROVED:
+            # 승인만 된 출장은 다가오는 일정일 수도, 이미 다녀온 것일 수도 있다.
+            start = today - timedelta(days=rng.randint(-30, 60))
+        else:
+            # DRAFT / SUBMITTED / REJECTED — 아직 확정 전이라 미래가 자연스럽다.
+            start = today - timedelta(days=rng.randint(-45, 30))
         purpose = rng.choice(["CUSTOMER", "SUPPORT", "TRAINING", "CONFERENCE", "AUDIT"])
+
+        submitted_at = None
+        approved_at = None
+        if status != TripStatus.DRAFT:
+            # 시작일보다 며칠 앞서 제출하고, 그로부터 1~2일 뒤 승인되었다고 본다.
+            submitted_at = datetime.combine(
+                start - timedelta(days=rng.randint(3, 10)),
+                datetime.min.time(),
+                tzinfo=timezone.utc,
+            ) + timedelta(hours=rng.randint(9, 18), minutes=rng.choice([0, 15, 30, 45]))
+            if status in {TripStatus.APPROVED, TripStatus.COMPLETED, TripStatus.SETTLED}:
+                approved_at = submitted_at + timedelta(
+                    days=rng.randint(1, 2), hours=rng.randint(0, 8)
+                )
+
         trip = Trip(
             trip_no=f"BT-2026-{index:04d}",
             user_id=author.id,
             title=f"{city} {'해외' if overseas else '국내'}출장",
             purpose_code=purpose,
-            purpose_detail=f"{city} 현장 {purpose} 목적 출장",
+            purpose_detail=f"{city} 현장 {TRIP_PURPOSE_LABELS[purpose]} 목적 출장",
             destination_type_code="OVERSEAS" if overseas else "DOMESTIC",
             country_code=country,
             city=city,
@@ -2210,16 +2299,57 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
             estimated_cost=Decimal(rng.randrange(200000, 4000000, 10000)),
             status=status,
             approver_id=author.manager_id if status != TripStatus.DRAFT else None,
-            submitted_at=None if status == TripStatus.DRAFT else datetime.now(timezone.utc),
-            approved_at=(
-                datetime.now(timezone.utc)
-                if status in {TripStatus.APPROVED, TripStatus.COMPLETED, TripStatus.SETTLED}
-                else None
-            ),
+            submitted_at=submitted_at,
+            approved_at=approved_at,
             reject_reason="사유 보완 필요" if status == TripStatus.REJECTED else None,
         )
         session.add(trip)
         trips.append(trip)
+    await session.flush()
+
+    # 완료/정산된 출장은 실제로 그 기간 동안 저자 본인이 쓴 카드거래가 있어야
+    # Phase 3의 자동매칭 데모가 성립한다. 카드거래를 출장과 무관하게 생성하면
+    # 매칭 후보가 순전히 우연에 의존하게 되어 후보가 0건인 출장이 나온다.
+    cards_by_user = {
+        card.user_id: card for card in (await session.execute(select(CorporateCard))).scalars().all()
+    }
+    for trip in trips:
+        if trip.status not in {TripStatus.COMPLETED, TripStatus.SETTLED}:
+            continue
+        card = cards_by_user.get(trip.user_id)
+        if card is None:
+            continue
+        trip_duration = (trip.end_date - trip.start_date).days
+        if trip_duration >= 2:
+            # 여러 밤을 묵는 출장이라 숙박비도 자연스럽다.
+            categories, weights = ["MEAL", "TRANSPORT", "LODGING"], [55, 30, 15]
+        else:
+            categories, weights = ["MEAL", "TRANSPORT"], [65, 35]
+        for _ in range(rng.randint(2, 5)):
+            category = rng.choices(categories, weights=weights)[0]
+            day_offset = rng.randint(0, trip_duration)
+            approved = datetime.combine(
+                trip.start_date + timedelta(days=day_offset),
+                datetime.min.time(),
+                tzinfo=timezone.utc,
+            ) + timedelta(hours=rng.randint(7, 22), minutes=rng.choice([0, 15, 30, 45]))
+            base = {
+                "MEAL": rng.randrange(8000, 60000, 500),
+                "TRANSPORT": rng.randrange(3000, 180000, 500),
+                "LODGING": rng.randrange(80000, 320000, 1000),
+            }[category]
+            session.add(
+                CardTransaction(
+                    card_id=card.id,
+                    approved_at=approved,
+                    merchant_name=rng.choice(MERCHANTS[category]),
+                    merchant_category_code=category,
+                    amount=Decimal(base),
+                    currency_code="KRW",
+                    amount_krw=Decimal(base),
+                    is_cancelled=False,
+                )
+            )
     await session.flush()
 
     settleable = [t for t in trips if t.status in {TripStatus.COMPLETED, TripStatus.SETTLED}][:12]
@@ -2255,26 +2385,37 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
 
 
 async def seed_all(session: AsyncSession) -> None:
-    rng = random.Random(RNG_SEED)
     await _seed_codes(session)
     depts = await _seed_org(session)
     await _seed_centers(session, depts)
     users = await _seed_users(session, depts)
-    await _seed_cards(session, users, rng)
-    await _seed_trips(session, users, rng)
+    # 블록마다 독립 시드를 쓴다. 공용 rng 하나를 돌려쓰면 앞 블록이 early-return으로
+    # 난수를 소비하지 않았을 때 뒤 블록 결과가 통째로 달라진다.
+    await _seed_cards(session, users, random.Random(f"{RNG_SEED}-cards"))
+    await _seed_trips(session, users, random.Random(f"{RNG_SEED}-trips"))
     await session.commit()
 ```
 
 - [ ] **Step 4: 테스트 통과 확인**
 
-Task 10에서 `app.security.hash_password`를 만들기 전까지는 import 에러가 난다. Task 10 완료 후 실행한다.
+Run: `cd backend && uv run pytest -v`
+Expected: PASS — 실패 0
 
-Run: `cd backend && uv run pytest tests/test_seed.py -v`
-Expected: 현재는 FAIL — `ModuleNotFoundError: No module named 'app.security'`. **Task 10 완료 후 재실행하여 PASS 확인.**
+- [ ] **Step 5: 커밋**
 
-- [ ] **Step 5: 커밋 보류**
+```bash
+git add backend/
+git commit -m "feat(backend): add idempotent seed data"
+```
 
-Task 10에서 함께 커밋한다.
+**실행 순서 주의.** 이 태스크는 `app.security.hash_password`에 의존하므로 **Task 10(비밀번호 해싱 + JWT)을 먼저 실행한다.** 번호는 9지만 순서는 10 다음이다.
+
+### 시드 데이터 설계상 중요한 결정
+
+- **출장 시작일은 상태에 종속된다.** COMPLETED·SETTLED는 반드시 과거(`duration + 1` ~ 170일 전)여야 한다. 종료일이 오늘 이전이어야 `APPROVED → COMPLETED` 전이 규칙과 맞고, 카드거래가 최근 180일에만 존재하므로 미래 날짜 출장은 정산 자동매칭 후보가 **구조적으로 0건**이 된다. 실제로 상태와 무관하게 날짜를 뽑았을 때 40건 중 6건이 미래였고 그중 COMPLETED가 1건 있었다.
+- **완료된 출장 기간 안에 카드거래를 심는다.** 카드거래를 출장과 무관하게 생성하면 매칭이 잡히는 것은 순전히 우연이다(기대값 ≈1.4건, P(0건) ≈ 25%). 실제로는 출장 중에 식비·교통비·숙박비를 쓴다. `_seed_trips`의 2차 패스가 COMPLETED·SETTLED 출장마다 작성자 본인 카드로 기간 내 2~5건을 추가 생성한다. 이것이 데이터를 현실적으로 만들면서 자동매칭 데모를 항상 성립시킨다. 이 장치 없이는 COMPLETED·SETTLED 17건 중 7건이 매칭 0건이었다.
+- **블록마다 독립 RNG를 쓴다.** 공용 `rng` 하나를 넘기면 앞 블록이 early-return으로 난수를 소비하지 않았을 때 뒤 블록 결과가 통째로 달라진다(실측: 출장 40/40건 전부 상이). `seed_all`이 현재 원자적이라 도달하지 않을 뿐, 결정성이 "모든 블록이 항상 함께 실행된다"는 암묵적 가정에 매달리는 상태였다.
+- **`ExpenseItem`에는 `card_transaction_id`를 넣지 않는다.** 카드거래를 정산항목에 연결하는 것이 Phase 3 자동매칭 기능 자체이므로, 미리 연결해두면 그 데모가 사라진다.
 
 ---
 
