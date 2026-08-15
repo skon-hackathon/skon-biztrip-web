@@ -396,6 +396,51 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
         trips.append(trip)
     await session.flush()
 
+    # 완료/정산된 출장은 실제로 그 기간 동안 저자 본인이 쓴 카드거래가 있어야
+    # Phase 3의 자동매칭 데모가 성립한다. 카드거래를 출장과 무관하게 생성하면
+    # 매칭 후보가 순전히 우연에 의존하게 되어 후보가 0건인 출장이 나온다.
+    cards_by_user = {
+        card.user_id: card for card in (await session.execute(select(CorporateCard))).scalars().all()
+    }
+    for trip in trips:
+        if trip.status not in {TripStatus.COMPLETED, TripStatus.SETTLED}:
+            continue
+        card = cards_by_user.get(trip.user_id)
+        if card is None:
+            continue
+        trip_duration = (trip.end_date - trip.start_date).days
+        if trip_duration >= 2:
+            # 여러 밤을 묵는 출장이라 숙박비도 자연스럽다.
+            categories, weights = ["MEAL", "TRANSPORT", "LODGING"], [55, 30, 15]
+        else:
+            categories, weights = ["MEAL", "TRANSPORT"], [65, 35]
+        for _ in range(rng.randint(2, 5)):
+            category = rng.choices(categories, weights=weights)[0]
+            day_offset = rng.randint(0, trip_duration)
+            approved = datetime.combine(
+                trip.start_date + timedelta(days=day_offset),
+                datetime.min.time(),
+                tzinfo=timezone.utc,
+            ) + timedelta(hours=rng.randint(7, 22), minutes=rng.choice([0, 15, 30, 45]))
+            base = {
+                "MEAL": rng.randrange(8000, 60000, 500),
+                "TRANSPORT": rng.randrange(3000, 180000, 500),
+                "LODGING": rng.randrange(80000, 320000, 1000),
+            }[category]
+            session.add(
+                CardTransaction(
+                    card_id=card.id,
+                    approved_at=approved,
+                    merchant_name=rng.choice(MERCHANTS[category]),
+                    merchant_category_code=category,
+                    amount=Decimal(base),
+                    currency_code="KRW",
+                    amount_krw=Decimal(base),
+                    is_cancelled=False,
+                )
+            )
+    await session.flush()
+
     settleable = [t for t in trips if t.status in {TripStatus.COMPLETED, TripStatus.SETTLED}][:12]
     for index, trip in enumerate(settleable, start=1):
         report = ExpenseReport(

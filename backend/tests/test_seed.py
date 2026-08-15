@@ -1,6 +1,8 @@
-from sqlalchemy import func, select
+from datetime import timedelta
 
-from app.enums import UserRole
+from sqlalchemy import DateTime, cast, func, select
+
+from app.enums import TripStatus, UserRole
 from app.models import (
     CardTransaction,
     Code,
@@ -65,6 +67,41 @@ async def test_seed_expense_report_totals_match_items(db_session):
             )
         ).scalar_one()
         assert total == report.total_amount_krw
+
+
+async def test_seed_completed_or_settled_trips_have_a_matching_card_transaction(db_session):
+    """Phase 3 자동매칭 데모가 성립하려면, COMPLETED/SETTLED 상태인 모든 출장에 대해
+    저자 본인 카드에서 발생한 취소되지 않은 카드거래가 출장 기간(start_date~end_date,
+    당일 전체 포함) 안에 최소 1건 존재해야 한다. Date와 timestamptz 경계를 명시적으로
+    UTC로 맞춰 비교한다 — 그냥 <= end_date로 비교하면 종료일 당일 자정 이후 거래가
+    잘려나간다."""
+    await seed_all(db_session)
+
+    window_start = func.timezone("UTC", cast(Trip.start_date, DateTime))
+    window_end_exclusive = func.timezone("UTC", cast(Trip.end_date, DateTime)) + timedelta(days=1)
+
+    has_match = (
+        select(CardTransaction.id)
+        .join(CorporateCard, CorporateCard.id == CardTransaction.card_id)
+        .where(
+            CorporateCard.user_id == Trip.user_id,
+            CardTransaction.is_cancelled.is_(False),
+            CardTransaction.approved_at >= window_start,
+            CardTransaction.approved_at < window_end_exclusive,
+        )
+        .exists()
+    )
+
+    missing = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(Trip)
+            .where(Trip.status.in_([TripStatus.COMPLETED, TripStatus.SETTLED]))
+            .where(~has_match)
+        )
+    ).scalar_one()
+
+    assert missing == 0
 
 
 async def test_seed_creates_one_admin_and_three_managers(db_session):
