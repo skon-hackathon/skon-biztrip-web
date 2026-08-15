@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
+import jwt
 import pytest
 
+from app.config import get_settings
 from app.errors import AuthError
 from app.security import create_access_token, decode_access_token, hash_password, verify_password
 
@@ -40,3 +42,35 @@ def test_decode_rejects_expired_token():
         decode_access_token(expired)
 
     assert exc_info.value.code == "TOKEN_EXPIRED"
+
+
+def test_decode_rejects_token_signed_with_wrong_secret():
+    payload = {"sub": "5", "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
+    token = jwt.encode(payload, "a-different-secret-value-that-is-not-the-real-one", algorithm="HS256")
+
+    with pytest.raises(AuthError) as exc_info:
+        decode_access_token(token)
+
+    assert exc_info.value.code == "INVALID_TOKEN"
+
+
+def test_decode_rejects_token_without_sub_claim():
+    settings = get_settings()
+    payload = {"exp": datetime.now(timezone.utc) + timedelta(hours=1)}
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+    with pytest.raises(AuthError) as exc_info:
+        decode_access_token(token)
+
+    assert exc_info.value.code == "INVALID_TOKEN"
+
+
+def test_decode_rejects_token_with_non_numeric_sub():
+    settings = get_settings()
+    payload = {"sub": "3.5", "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+    with pytest.raises(AuthError) as exc_info:
+        decode_access_token(token)
+
+    assert exc_info.value.code == "INVALID_TOKEN"

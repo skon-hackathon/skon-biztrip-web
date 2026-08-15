@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://skon:skon@localhost:5432/skon"
-    jwt_secret: str = "dev-only-insecure-secret"
+    jwt_secret: str = "dev-only-insecure-secret-do-not-use-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 8
     seed_on_startup: bool = True

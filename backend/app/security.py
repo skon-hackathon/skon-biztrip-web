@@ -29,8 +29,8 @@ def decode_access_token(token: str) -> int:
     settings = get_settings()
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        return int(payload["sub"])
     except jwt.ExpiredSignatureError as exc:
         raise AuthError("TOKEN_EXPIRED", "토큰이 만료되었습니다") from exc
-    except jwt.PyJWTError as exc:
+    except (jwt.PyJWTError, KeyError, ValueError) as exc:
         raise AuthError("INVALID_TOKEN", "유효하지 않은 토큰입니다") from exc
-    return int(payload["sub"])
