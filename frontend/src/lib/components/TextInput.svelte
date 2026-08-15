@@ -1,11 +1,15 @@
 <script lang="ts">
+	import type { FullAutoFill } from 'svelte/elements';
+
 	let {
 		label,
 		value = $bindable(''),
 		type = 'text',
 		placeholder = '',
 		error = '',
-		id
+		id,
+		name,
+		autocomplete
 	}: {
 		label: string;
 		value?: string;
@@ -13,6 +17,8 @@
 		placeholder?: string;
 		error?: string;
 		id?: string;
+		name?: string;
+		autocomplete?: string;
 	} = $props();
 
 	const fallbackId = $props.id();
@@ -26,6 +32,8 @@
 		id={inputId}
 		{type}
 		{placeholder}
+		{name}
+		autocomplete={autocomplete as FullAutoFill | undefined}
 		bind:value
 		aria-invalid={!!error}
 		aria-describedby={error ? errorId : undefined}

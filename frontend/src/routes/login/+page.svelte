@@ -12,6 +12,7 @@
 
 	async function handleSubmit(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
+		if (submitting) return;
 		errorMessage = '';
 		submitting = true;
 		try {
@@ -33,11 +34,17 @@
 		<p class="mt-2 text-body-sm text-muted">사내 계정으로 로그인하세요.</p>
 
 		<form class="mt-8 flex flex-col gap-4" onsubmit={handleSubmit}>
-			<TextInput label="이메일" type="email" bind:value={email} placeholder="name@skon.example" />
-			<TextInput label="비밀번호" type="password" bind:value={password} />
+			<TextInput
+				label="이메일"
+				type="email"
+				bind:value={email}
+				placeholder="name@skon.example"
+				autocomplete="username"
+			/>
+			<TextInput label="비밀번호" type="password" bind:value={password} autocomplete="current-password" />
 
 			{#if errorMessage}
-				<p class="text-caption-sm text-error">{errorMessage}</p>
+				<p class="text-caption-sm text-error" role="alert">{errorMessage}</p>
 			{/if}
 
 			<Button type="submit" full disabled={submitting}>
