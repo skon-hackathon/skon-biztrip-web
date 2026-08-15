@@ -3054,6 +3054,10 @@ body {
 }
 ```
 
+**컴포넌트 작성 시 주의 — `text-body`를 쓰지 말 것.** `--color-body`가 정의돼 있어 Tailwind가 `text-body`를 **색상** 유틸리티(`color: #3f3f3f`)로 자동 생성한다. 본문 타이포를 원해서 `text-body`라고 쓰면 글자 크기는 그대로인 채 색만 바뀌고, 에러도 나지 않는다. 본문 스타일은 반드시 `text-body-md` 또는 `text-body-sm`으로 명시한다. (`text-ink`·`text-muted`·`text-error` 같은 색상 유틸리티와 `text-display-xl`·`text-badge` 같은 타이포 유틸리티가 공존하는 것 자체는 검증됐다 — 이름이 완전히 겹치는 조합이 없기 때문이다.)
+
+`app.html`은 `lang="ko"`, `<title>SK온 출장시스템</title>`, `<link rel="icon" href="%sveltekit.assets%/skon-logo.png" />`를 포함해야 한다. 스캐폴드 기본값은 `lang="en"`이고 타이틀이 없으며, 이후 어떤 태스크도 `app.html`을 건드리지 않으므로 여기서 고치지 않으면 그대로 배포된다.
+
 - [ ] **Step 5: 로고 배치 및 루트 레이아웃**
 
 ```bash
