@@ -3167,7 +3167,7 @@ git commit -m "feat(frontend): scaffold SvelteKit with DESIGN.md tokens and SK r
 		type = 'text',
 		placeholder = '',
 		error = '',
-		id = crypto.randomUUID()
+		id
 	}: {
 		label: string;
 		value?: string;
@@ -3176,24 +3176,32 @@ git commit -m "feat(frontend): scaffold SvelteKit with DESIGN.md tokens and SK r
 		error?: string;
 		id?: string;
 	} = $props();
+
+	const fallbackId = $props.id();
+	const inputId = $derived(id ?? fallbackId);
+	const errorId = $derived(`${inputId}-error`);
 </script>
 
 <div class="flex flex-col gap-2">
-	<label for={id} class="text-caption text-muted">{label}</label>
+	<label for={inputId} class="text-caption text-muted">{label}</label>
 	<input
-		{id}
+		id={inputId}
 		{type}
 		{placeholder}
 		bind:value
+		aria-invalid={!!error}
+		aria-describedby={error ? errorId : undefined}
 		class="h-14 rounded-sm border bg-canvas px-3 text-body-md text-ink outline-none focus:border-2 focus:border-ink {error
 			? 'border-error'
 			: 'border-hairline'}"
 	/>
 	{#if error}
-		<p class="text-caption-sm text-error">{error}</p>
+		<p id={errorId} class="text-caption-sm text-error">{error}</p>
 	{/if}
 </div>
 ```
+
+**`crypto.randomUUID()`를 쓰면 안 되는 이유.** 이 API는 `[SecureContext]` 전용이라 HTTPS나 localhost가 아니면 **존재하지 않는다**. 운영 배포는 nginx가 80포트 평문 HTTP로 서빙하므로, localhost가 아닌 주소로 접속하는 순간 `TypeError: crypto.randomUUID is not a function`이 나면서 이 컴포넌트를 포함한 페이지가 통째로 렌더에 실패한다(실측: `isSecureContext === false`인 LAN 주소에서 input이 0개 렌더됨). 로컬 개발에서는 localhost라 멀쩡해 보이므로 발견이 늦는다. Svelte의 `$props.id()`는 그런 제약이 없다.
 
 - [ ] **Step 3: Badge 구현**
 
