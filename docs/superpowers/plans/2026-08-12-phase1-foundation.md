@@ -228,7 +228,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://skon:skon@localhost:5432/skon"
-    jwt_secret: str = "dev-only-insecure-secret"
+    jwt_secret: str = "dev-only-insecure-secret-do-not-use-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 8
     seed_on_startup: bool = True
@@ -243,7 +243,7 @@ def get_settings() -> Settings:
 
 ```
 DATABASE_URL=postgresql+asyncpg://skon:skon@localhost:5432/skon
-JWT_SECRET=dev-only-insecure-secret
+JWT_SECRET=dev-only-insecure-secret-do-not-use-in-production
 SEED_ON_STARTUP=true
 ```
 
@@ -2374,12 +2374,14 @@ def decode_access_token(token: str) -> int:
     settings = get_settings()
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        return int(payload["sub"])
     except jwt.ExpiredSignatureError as exc:
         raise AuthError("TOKEN_EXPIRED", "토큰이 만료되었습니다") from exc
-    except jwt.PyJWTError as exc:
+    except (jwt.PyJWTError, KeyError, ValueError) as exc:
         raise AuthError("INVALID_TOKEN", "유효하지 않은 토큰입니다") from exc
-    return int(payload["sub"])
 ```
+
+**`int(payload["sub"])`가 왜 `try` 안에 있어야 하는가.** 밖에 두면 서명은 유효하지만 `sub` 클레임이 없거나(`KeyError`) 숫자가 아닌 문자열인(`ValueError`) 토큰이 그대로 새어나가 catch-all 핸들러의 `500 INTERNAL_ERROR`가 된다. 이 함수의 계약은 "JWT 실패 → `AuthError`"이고, 500은 Agent에게 재인증하라는 것도 중단하라는 것도 알려주지 못한다. `sub`가 `None`이거나 리스트인 경우는 PyJWT의 `InvalidSubjectError`가 먼저 잡으므로 추가 처리가 필요 없다.
 
 - [ ] **Step 4: security 테스트 통과 확인**
 
@@ -3903,3 +3905,9 @@ Phase 1 리뷰 과정에서 "여기가 아니라 Phase 2에서 해야 한다"고
 - **전이 조건·권한 검증** — `trip_status.py`는 합법성만 판단한다. `APPROVED → COMPLETED`의 `end_date` 과거 조건, 승인·반려를 배정된 결재자만 수행할 수 있다는 규칙은 Phase 2 서비스가 별도로 검사한다.
 - **요청자·결재자 이름 직렬화** — `Trip.user_id`/`approver_id`에 `relationship()`이 없는 것은 의도적이다. 출장 상세에 이름을 실을 때 `relationship(lazy="selectin")`을 습관적으로 붙이지 말고 명시적 조인/셀렉트로 가져온다. 이 프로젝트는 의도치 않은 eager loading을 이미 세 번(`198698d`, `afa0203`, `b5925cd`) 되돌린 이력이 있다.
 - **상태 전이 시 이력·알림 기록** — 모든 전이는 서비스의 단일 지점을 통과하며 그 지점에서 `ActivityLog`와 `Notification`을 함께 기록한다. 웹 경로든 API Key 경로든 이력이 빠질 수 없어야 한다.
+
+### 보안 관련 이월 (Task 10 리뷰에서 확정)
+
+- **비밀번호 길이 검증** — bcrypt 5.x는 72바이트를 넘는 비밀번호를 조용히 자르지 않고 `ValueError`를 던진다. 한글은 글자당 3바이트라 **24자만 넘어도 터진다.** 현재 유일한 호출부는 시드의 9바이트 데모 비밀번호라 문제가 없지만, 비밀번호 설정·변경 엔드포인트를 만드는 순간 요청 스키마에서 길이를 막아야 한다. `hash_password` 안에서 72바이트로 자르는 방식은 서로 다른 긴 비밀번호가 같은 해시를 갖게 되므로 쓰지 않는다.
+- **로그인 타이밍 오라클** — 사용자 미존재 시 `verify_password`를 건너뛰면 응답 시간으로 계정 존재 여부가 새어나간다. 실측치: 정상 bcrypt 검증 ~205ms, 조회 실패 후 즉시 반환 ~0.0006ms. **주의: 가짜 문자열을 `verify_password`에 넘기는 방식으로는 해결되지 않는다** — 잘못된 salt 형식은 bcrypt가 ~0.003ms만에 실패하기 때문이다. 시간을 맞추려면 상수 더미 비밀번호의 **실제 bcrypt 해시**를 미리 만들어 두고 그것과 대조해야 한다. 사내 데모 범위에서 실질 위험은 낮으나, 대응한다면 이 방식이어야 한다.
+- **운영 JWT 시크릿** — `docker-compose.yml`의 `JWT_SECRET: ${JWT_SECRET:-change-me-in-production}` 기본값은 23바이트로 HS256 권장 32바이트 미만이다. 배포 태스크에서 32바이트 이상으로 늘린다. PyJWT의 `InsecureKeyLengthWarning`을 필터링해서 덮지 말 것 — 진짜 약한 운영 시크릿이 들어왔을 때 그것만이 유일한 경고다.
