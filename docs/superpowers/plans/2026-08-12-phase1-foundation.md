@@ -3532,7 +3532,8 @@ git commit -m "feat(frontend): add api client with unified error parsing and aut
 	];
 
 	function isActive(href: string): boolean {
-		return page.url.pathname.startsWith(href);
+		const path = page.url.pathname;
+		return path === href || path.startsWith(`${href}/`);
 	}
 
 	function signOut(): void {
@@ -3542,15 +3543,16 @@ git commit -m "feat(frontend): add api client with unified error parsing and aut
 </script>
 
 <div class="min-h-screen bg-canvas">
-	<header class="flex h-20 items-center border-b border-hairline px-8">
-		<a href="/" class="flex items-center">
+	<header class="grid h-20 grid-cols-[1fr_auto_1fr] items-center border-b border-hairline px-8">
+		<a href="/" class="flex items-center justify-self-start">
 			<img src="/skon-logo.png" alt="SK온 출장시스템" class="h-8 w-auto" />
 		</a>
 
-		<nav class="mx-auto flex items-center gap-8">
+		<nav aria-label="주 메뉴" class="flex items-center gap-8 justify-self-center">
 			{#each tabs as tab (tab.href)}
 				<a
 					href={tab.href}
+					aria-current={isActive(tab.href) ? 'page' : undefined}
 					class="pb-1 text-nav-link {isActive(tab.href)
 						? 'border-b-2 border-ink text-ink'
 						: 'text-muted hover:text-ink'}"
@@ -3560,7 +3562,7 @@ git commit -m "feat(frontend): add api client with unified error parsing and aut
 			{/each}
 		</nav>
 
-		<div class="flex items-center gap-4">
+		<div class="flex items-center gap-4 justify-self-end">
 			{#if auth.user}
 				<span class="text-body-sm text-muted">{auth.user.name} · {auth.user.department_name}</span>
 				<button
@@ -4072,6 +4074,14 @@ Phase 1 리뷰 과정에서 "여기가 아니라 Phase 2에서 해야 한다"고
 
 - **`request.state.scopes`는 `UNRESTRICTED` 센티널과 비교한다.** `app/deps.py`가 JWT 인증 시 `request.state.scopes = UNRESTRICTED`(전용 센티널 객체)를 넣는다. Phase 4의 스코프 검사기는 이 값을 **센티널과 동일성 비교**해야 하며, `getattr(request.state, "scopes", None)`처럼 기본값을 두고 "값이 없으면 통과" 식으로 쓰면 안 된다. 처음에는 `None`을 "제한 없음"으로 썼는데, 그러면 "제한 없음"과 "`get_principal`이 아예 실행되지 않음"이 구분되지 않아, 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는 fail-open이 된다.
 - **상태 전이 시 이력·알림 기록** — 모든 전이는 서비스의 단일 지점을 통과하며 그 지점에서 `ActivityLog`와 `Notification`을 함께 기록한다. 웹 경로든 API Key 경로든 이력이 빠질 수 없어야 한다.
+
+### 앱 셸 이월 (Task 15 리뷰에서 확정)
+
+- **반응형 붕괴 미구현.** DESIGN.md는 744px 미만에서 상단 내비를 로고 + 햄버거로 접고 제품 탭을 시트 뒤로 넣으라고 명시하지만 `AppShell`에는 그 처리가 전혀 없다. 실측: 744px에서는 한 줄에 다 들어가고 로그아웃 버튼까지 정상이지만, 375px에서는 탭 레이블이 두 줄로 깨지고(출\n장) 헤더가 80px를 넘어가며 부서명과 로그아웃 버튼이 뷰포트 밖으로 밀려난다. 노트북·프로젝터로 보여주는 데스크톱 우선 데모라 Phase 1에서는 의도적으로 넘어갔다. 모바일 대응 Phase에서 처음부터 만들어야 하며, 현재 브레이크포인트 클래스나 햄버거 뼈대는 하나도 없다.
+- **`isActive`의 접두사 경계.** `startsWith(href)`만 쓰면 `/trips-archive`가 `/trips` 탭을 활성화한다. `path === href || path.startsWith(`${href}/`)`로 경계를 확인한다. 나중 Phase가 이 접두사들 아래 실제 라우트를 추가하므로 실제로 걸린다.
+- **탭 중앙 정렬은 grid로.** flex 3분할에 `mx-auto`를 쓰면 양쪽 항목 폭이 같을 때만 중앙에 온다. 로고(~70px)와 우측 사용자 블록은 폭이 다르므로 탭이 항상 왼쪽으로 밀린다(실측 60~140px, 부서명 길이에 비례). `grid-cols-[1fr_auto_1fr]`로 양쪽에 같은 여유를 주고 가운데를 `justify-self-center`로 둔다.
+- **로그아웃 버튼은 `Button.svelte`를 안 쓴다.** `Button`의 네 변형(primary/secondary/tertiary/pill) 중 이 외곽선 pill 모양과 맞는 것이 없어 손으로 작성했다. 나중에 맞는 변형을 추가하거나 이대로 두거나 둘 다 가능하다.
+- **`restore()`/`clear()` 경합.** `restore()`가 진행 중일 때 `clear()`가 실행되면, `await` 뒤의 `this.user = ...` 대입이 clear 이후에 착지해 `token`은 null인데 `user`만 되살아날 수 있다. 현재는 도달 불가다 — `AppShell`은 `auth.user`가 이미 non-null일 때만 마운트되므로 로그아웃 버튼이 존재하는 시점에는 `restore()`가 이미 끝나 있다. 나중에 "세션 갱신" 같은 호출이 로그아웃과 겹칠 수 있게 되면 그때 정리한다.
 
 ### 프론트엔드 데이터 계층 이월 (Task 14 리뷰에서 확정)
 
