@@ -4047,10 +4047,15 @@ Phase 1 리뷰 과정에서 "여기가 아니라 Phase 2에서 해야 한다"고
 - **교차 필드 제약은 서비스에서** — `end_date >= start_date`, `estimated_cost >= 0`, 반려 시 `reject_reason` 필수. 모델에 `CheckConstraint`를 걸지 않았으므로 생성·반려 서비스 함수가 반드시 검증해야 한다. 모델이 막아줄 거라고 가정하지 말 것.
 - **전이 조건·권한 검증** — `trip_status.py`는 합법성만 판단한다. `APPROVED → COMPLETED`의 `end_date` 과거 조건, 승인·반려를 배정된 결재자만 수행할 수 있다는 규칙은 Phase 2 서비스가 별도로 검사한다.
 - **요청자·결재자 이름 직렬화** — `Trip.user_id`/`approver_id`에 `relationship()`이 없는 것은 의도적이다. 출장 상세에 이름을 실을 때 `relationship(lazy="selectin")`을 습관적으로 붙이지 말고 명시적 조인/셀렉트로 가져온다. 이 프로젝트는 의도치 않은 eager loading을 이미 세 번(`198698d`, `afa0203`, `b5925cd`) 되돌린 이력이 있다.
+
+  **`_to_user_out`을 그대로 베끼지 말 것.** `app/routers/auth.py`의 `_to_user_out`은 호출마다 `session.get(Department, ...)`를 한 번 한다. 로그인·`/me`처럼 단건 응답에서는 무해하지만, 출장 40건 목록에서 행마다 (요청자 + 결재자) 이 헬퍼를 부르면 N+1이 된다. 목록 응답은 필요한 id를 모아 `select(User).where(User.id.in_(ids))` · `select(Department).where(Department.id.in_(ids))`로 한 번에 가져오거나, 목록 쿼리 자체에 명시적 `JOIN`을 건다.
+
+- **`request.state.scopes`는 `UNRESTRICTED` 센티널과 비교한다.** `app/deps.py`가 JWT 인증 시 `request.state.scopes = UNRESTRICTED`(전용 센티널 객체)를 넣는다. Phase 4의 스코프 검사기는 이 값을 **센티널과 동일성 비교**해야 하며, `getattr(request.state, "scopes", None)`처럼 기본값을 두고 "값이 없으면 통과" 식으로 쓰면 안 된다. 처음에는 `None`을 "제한 없음"으로 썼는데, 그러면 "제한 없음"과 "`get_principal`이 아예 실행되지 않음"이 구분되지 않아, 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는 fail-open이 된다.
 - **상태 전이 시 이력·알림 기록** — 모든 전이는 서비스의 단일 지점을 통과하며 그 지점에서 `ActivityLog`와 `Notification`을 함께 기록한다. 웹 경로든 API Key 경로든 이력이 빠질 수 없어야 한다.
 
 ### 보안 관련 이월 (Task 10 리뷰에서 확정)
 
 - **비밀번호 길이 검증** — bcrypt 5.x는 72바이트를 넘는 비밀번호를 조용히 자르지 않고 `ValueError`를 던진다. 한글은 글자당 3바이트라 **24자만 넘어도 터진다.** 현재 유일한 호출부는 시드의 9바이트 데모 비밀번호라 문제가 없지만, 비밀번호 설정·변경 엔드포인트를 만드는 순간 요청 스키마에서 길이를 막아야 한다. `hash_password` 안에서 72바이트로 자르는 방식은 서로 다른 긴 비밀번호가 같은 해시를 갖게 되므로 쓰지 않는다.
-- **로그인 타이밍 오라클** — 사용자 미존재 시 `verify_password`를 건너뛰면 응답 시간으로 계정 존재 여부가 새어나간다. 실측치: 정상 bcrypt 검증 ~205ms, 조회 실패 후 즉시 반환 ~0.0006ms. **주의: 가짜 문자열을 `verify_password`에 넘기는 방식으로는 해결되지 않는다** — 잘못된 salt 형식은 bcrypt가 ~0.003ms만에 실패하기 때문이다. 시간을 맞추려면 상수 더미 비밀번호의 **실제 bcrypt 해시**를 미리 만들어 두고 그것과 대조해야 한다. 사내 데모 범위에서 실질 위험은 낮으나, 대응한다면 이 방식이어야 한다.
+- **로그인 타이밍 오라클 — 대응 완료.** 처음에는 데모 범위에서 수용 가능한 위험으로 분류했으나 뒤집었다. 실측 결과 미지 이메일 2.30ms 대 기지 이메일·오답 비밀번호 211.47ms로 **92배** 차이였고, 이는 네트워크 지터를 감안해도 쉽게 관측된다. 판단을 바꾼 결정적 이유는 수치가 아니라 **자기모순**이다. 열거 공격을 막으려고 오답 비밀번호와 미지 이메일의 에러 코드를 `INVALID_CREDENTIALS`로 이미 통일해 두었는데, 같은 사실이 응답 시간으로 새면 그 조치가 무의미해진다. 둘 다 하거나 둘 다 안 하거나여야 한다. 대응 방식: 모듈 로드 시 계산해 둔 더미 해시(`_DUMMY_PASSWORD_HASH`)를 써서 사용자가 없어도 bcrypt를 항상 태운다. **가짜 문자열을 넘기는 방식은 안 된다** — 잘못된 salt 형식은 bcrypt가 ~0.003ms만에 실패하므로 시간이 맞지 않는다.
+- **기동 시 동시성** — `main.py`의 lifespan은 `create_all` 후 `seed_all`을 돈다. 둘 다 check-then-act이라 백엔드 인스턴스가 동시에 두 개 뜨면 이론상 경합한다. 현재 배포 형태가 단일 인스턴스라 실제 위험은 없으므로 대응하지 않았다. 멀티 레플리카로 가면 advisory lock이나 `ON CONFLICT DO NOTHING`이 필요하다.
 - **운영 JWT 시크릿** — `docker-compose.yml`의 `JWT_SECRET: ${JWT_SECRET:-change-me-in-production}` 기본값은 23바이트로 HS256 권장 32바이트 미만이다. 배포 태스크에서 32바이트 이상으로 늘린다. PyJWT의 `InsecureKeyLengthWarning`을 필터링해서 덮지 말 것 — 진짜 약한 운영 시크릿이 들어왔을 때 그것만이 유일한 경고다.
