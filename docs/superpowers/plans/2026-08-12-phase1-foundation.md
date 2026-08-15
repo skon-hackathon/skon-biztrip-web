@@ -3336,7 +3336,7 @@ describe('request', () => {
 	it('falls back to a generic ApiError when body is not our shape', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(new Response('gateway down', { status: 502 }));
 
-		const error = await request('/api/v1/health', { fetchImpl: fetchMock }).catch((e) => e);
+		const error = await request<never>('/api/v1/health', { fetchImpl: fetchMock }).catch((e) => e);
 
 		expect(error).toBeInstanceOf(ApiError);
 		expect(error.status).toBe(502);
@@ -3349,6 +3349,8 @@ describe('request', () => {
 
 Run: `cd frontend && npm test`
 Expected: FAIL — `Failed to resolve import "./client"`
+
+**`request<never>`의 명시적 타입 인자가 왜 필요한가.** TypeScript 6.x에서는 `Promise<unknown>.catch((e) => e)`가 더 이상 `Promise<any>`로 붕괴하지 않는다. `request<T>`의 `T`가 추론되지 않으면 `unknown`으로 떨어지고, union에 `unknown`이 섞이면 속성 접근이 막혀 `TS18046: 'error' is of type 'unknown'`이 난다. 대안으로 catch 콜백에 `(e: any)`를 붙이거나 `e as ApiError`로 캐스팅하거나 바깥 `const`에 타입을 주는 방법을 모두 시도했지만 셋 다 같은 에러가 났다 — 원인이 콜백이 아니라 `request` 자체의 미추론 `T`이기 때문이다. `request<never>`는 순수 타입 수준 주석이라 런타임 동작과 단언 내용에 영향이 없고, `never | X`가 무조건 `X`로 붕괴하므로 가장 견고하다.
 
 - [ ] **Step 4: 타입 정의**
 
