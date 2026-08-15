@@ -2377,11 +2377,13 @@ def decode_access_token(token: str) -> int:
         return int(payload["sub"])
     except jwt.ExpiredSignatureError as exc:
         raise AuthError("TOKEN_EXPIRED", "토큰이 만료되었습니다") from exc
-    except (jwt.PyJWTError, KeyError, ValueError) as exc:
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError) as exc:
         raise AuthError("INVALID_TOKEN", "유효하지 않은 토큰입니다") from exc
 ```
 
-**`int(payload["sub"])`가 왜 `try` 안에 있어야 하는가.** 밖에 두면 서명은 유효하지만 `sub` 클레임이 없거나(`KeyError`) 숫자가 아닌 문자열인(`ValueError`) 토큰이 그대로 새어나가 catch-all 핸들러의 `500 INTERNAL_ERROR`가 된다. 이 함수의 계약은 "JWT 실패 → `AuthError`"이고, 500은 Agent에게 재인증하라는 것도 중단하라는 것도 알려주지 못한다. `sub`가 `None`이거나 리스트인 경우는 PyJWT의 `InvalidSubjectError`가 먼저 잡으므로 추가 처리가 필요 없다.
+**`int(payload["sub"])`가 왜 `try` 안에 있어야 하는가.** 밖에 두면 서명은 유효하지만 `sub` 클레임이 없거나(`KeyError`) 숫자가 아닌 문자열인(`ValueError`) 토큰이 그대로 새어나가 catch-all 핸들러의 `500 INTERNAL_ERROR`가 된다. 이 함수의 계약은 "JWT 실패 → `AuthError`"이고, 500은 Agent에게 재인증하라는 것도 중단하라는 것도 알려주지 못한다. `sub`가 `None`이거나 리스트인 경우는 PyJWT의 `InvalidSubjectError`가 먼저 잡으므로 추가 처리가 필요 없다. `TypeError`까지 잡는 이유는 `exp`가 스칼라가 아닌 토큰(`exp: [1,2,3]`)이 PyJWT 내부 `_validate_exp`의 `int(payload["exp"])`에서 `TypeError`로 새어나가기 때문이다.
+
+이 except 튜플이 넓어 보이지만 실제로 추가로 잡는 범위는 좁다. `try` 안에서 `jwt.decode()`가 아닌 유일한 코드가 `int(payload["sub"])`이므로, `KeyError`·`ValueError`가 나올 수 있는 곳은 그 한 줄뿐이다. 알고리즘 불일치(`InvalidAlgorithmError`)나 빈 시크릿(`InvalidKeyError`) 같은 내부 설정 오류는 전부 `PyJWTError` 하위 클래스라 첫 번째 절에서 이미 잡히므로, 진짜 버그가 401로 둔갑하지 않는다.
 
 - [ ] **Step 4: security 테스트 통과 확인**
 
