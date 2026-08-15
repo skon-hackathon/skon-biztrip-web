@@ -1,3 +1,9 @@
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import select
+
+from app.models import User
+from app.security import create_access_token
 from app.seed import seed_all
 
 
@@ -75,3 +81,46 @@ async def test_me_rejects_malformed_token(client, db_session):
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "INVALID_TOKEN"
+
+
+async def test_inactive_user_is_rejected_at_login_and_me(client, db_session):
+    await seed_all(db_session)
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "user1@skon.example", "password": "skon1234!"},
+    )
+    token = login.json()["access_token"]
+
+    user = (
+        await db_session.execute(select(User).where(User.email == "user1@skon.example"))
+    ).scalar_one()
+    user.is_active = False
+    await db_session.flush()
+
+    login_after_deactivation = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "user1@skon.example", "password": "skon1234!"},
+    )
+    assert login_after_deactivation.status_code == 401
+    assert login_after_deactivation.json()["error"]["code"] == "INVALID_CREDENTIALS"
+
+    me_response = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_response.status_code == 401
+    assert me_response.json()["error"]["code"] == "INVALID_TOKEN"
+
+
+async def test_me_rejects_expired_token(client, db_session):
+    await seed_all(db_session)
+    user = (
+        await db_session.execute(select(User).where(User.email == "user1@skon.example"))
+    ).scalar_one()
+    expired_token = create_access_token(
+        user_id=user.id, expires_at=datetime.now(timezone.utc) - timedelta(minutes=1)
+    )
+
+    response = await client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {expired_token}"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "TOKEN_EXPIRED"
