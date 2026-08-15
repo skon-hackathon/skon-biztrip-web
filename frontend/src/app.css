@@ -1,0 +1,133 @@
+@import 'tailwindcss';
+@import 'pretendard/dist/web/variable/pretendardvariable.css';
+
+@theme {
+	/* DESIGN.md colors — primary만 SK온 레드로 치환 */
+	--color-primary: #ea002c;
+	--color-primary-active: #c40024;
+	--color-primary-disabled: #f7ccd4;
+	--color-error: #c13515;
+	--color-error-hover: #b32505;
+	--color-ink: #222222;
+	--color-body: #3f3f3f;
+	--color-muted: #6a6a6a;
+	--color-muted-soft: #929292;
+	--color-hairline: #dddddd;
+	--color-hairline-soft: #ebebeb;
+	--color-border-strong: #c1c1c1;
+	--color-canvas: #ffffff;
+	--color-surface-soft: #f7f7f7;
+	--color-surface-strong: #f2f2f2;
+	--color-legal-link: #428bff;
+
+	/* DESIGN.md rounded */
+	--radius-xs: 4px;
+	--radius-sm: 8px;
+	--radius-md: 14px;
+	--radius-lg: 20px;
+	--radius-xl: 32px;
+
+	/* DESIGN.md spacing */
+	--spacing-xxs: 2px;
+	--spacing-xs: 4px;
+	--spacing-sm: 8px;
+	--spacing-md: 12px;
+	--spacing-base: 16px;
+	--spacing-lg: 24px;
+	--spacing-xl: 32px;
+	--spacing-xxl: 48px;
+	--spacing-section: 64px;
+
+	/* Cereal 대체 — 한글 지원 */
+	--font-sans: 'Pretendard Variable', Pretendard, -apple-system, system-ui, sans-serif;
+
+	/* DESIGN.md 단일 그림자 티어 */
+	--shadow-float:
+		rgba(0, 0, 0, 0.02) 0 0 0 1px, rgba(0, 0, 0, 0.04) 0 2px 6px 0, rgba(0, 0, 0, 0.1) 0 4px 8px 0;
+}
+
+/* DESIGN.md typography 스케일 */
+@utility text-display-xl {
+	font-size: 28px;
+	font-weight: 700;
+	line-height: 1.43;
+}
+@utility text-display-lg {
+	font-size: 22px;
+	font-weight: 500;
+	line-height: 1.18;
+	letter-spacing: -0.44px;
+}
+@utility text-display-md {
+	font-size: 21px;
+	font-weight: 700;
+	line-height: 1.43;
+}
+@utility text-display-sm {
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 1.2;
+	letter-spacing: -0.18px;
+}
+@utility text-rating {
+	font-size: 64px;
+	font-weight: 700;
+	line-height: 1.1;
+	letter-spacing: -1px;
+}
+@utility text-title-md {
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 1.25;
+}
+@utility text-title-sm {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.25;
+}
+@utility text-body-md {
+	font-size: 16px;
+	font-weight: 400;
+	line-height: 1.5;
+}
+@utility text-body-sm {
+	font-size: 14px;
+	font-weight: 400;
+	line-height: 1.43;
+}
+@utility text-caption {
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 1.29;
+}
+@utility text-caption-sm {
+	font-size: 13px;
+	font-weight: 400;
+	line-height: 1.23;
+}
+@utility text-badge {
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1.18;
+}
+@utility text-nav-link {
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 1.25;
+}
+@utility text-button-md {
+	font-size: 16px;
+	font-weight: 500;
+	line-height: 1.25;
+}
+@utility text-button-sm {
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 1.29;
+}
+
+body {
+	background-color: var(--color-canvas);
+	color: var(--color-ink);
+	font-family: var(--font-sans);
+}
