@@ -21,13 +21,31 @@ SK온의 사내 출장시스템을 모사한 데모 웹 애플리케이션. 실�
 | 폰트 | Pretendard (로컬 번들) |
 | 백엔드 | Python 3.12, FastAPI, SQLAlchemy 2.0 (async / asyncpg), Pydantic v2 |
 | 패키지 관리 | 백엔드 `uv` (`pyproject.toml` + `uv.lock`), 프론트 `npm` |
-| DB | PostgreSQL 16 |
+| DB | PostgreSQL 16 — **이 프로젝트가 띄우지 않고 외부 운영 DB에 접속** |
 | Ingress | nginx 1.27 |
-| 배포 | Docker + docker-compose, 4개 서비스 |
+| 배포 | Docker + docker-compose, 3개 서비스 (DB는 스택 밖) |
+
+### 데이터베이스 접속 정책
+
+**DB는 이 프로젝트의 배포 단위에 포함되지 않는다.** 이미 운영 중인 PostgreSQL에 접속하며, `DB_HOST` · `DB_PORT` · `DB_USER` · `DB_PASSWORD` · `DB_NAME` · `DB_SCHEMA`를 환경변수로 주입한다.
+
+접속은 매 커넥션마다 `search_path`를 `DB_SCHEMA` **하나로만** 고정한다(`connect_args={"server_settings": {"search_path": ...}}`). `public`을 fallback으로 남기지 않는 것이 핵심이다 — 남기면 언퀄리파이드 DDL·질의가 의도치 않게 다른 스키마로 새어나가고, 특히 테스트의 `drop_all`이 운영 테이블을 지울 수 있다.
+
+스키마명은 바인드 파라미터로 넘길 수 없어 DDL에 문자열로 보간되므로, `assert_safe_identifier`가 평범한 식별자(`^[A-Za-z_][A-Za-z0-9_]*$`)만 통과시킨다.
 
 ### 마이그레이션 정책
 
-Alembic을 도입하지 않는다. 모사 데모이므로 애플리케이션 기동 시 `create_all` + 멱등 시드 스크립트를 실행한다. 스키마 변경 시에는 볼륨을 삭제하고 재기동한다. (운영 전환이 필요해지면 그때 Alembic을 도입한다.)
+Alembic을 도입하지 않는다. 다만 **기동 시 자동 DDL·자동 시드를 하지 않는다** — 운영 DB에 붙어 있으므로 남의 데이터를 위협하기 때문이다. 스키마 생성과 데모 데이터 적재는 `app/cli.py`의 명령을 사람이 명시적으로 실행할 때만 일어난다.
+
+```
+uv run python -m app.cli check      # 접속 확인만
+uv run python -m app.cli init-db    # 스키마 + 없는 테이블 생성
+uv run python -m app.cli seed       # 데모 데이터 (멱등)
+```
+
+`init-db`는 없는 테이블만 만들고 기존 테이블의 컬럼 변경은 반영하지 않는다. 스키마를 바꾸면 해당 테이블을 지우고 다시 돌린다.
+
+테스트는 같은 서버의 **별도 스키마**(`TEST_DB_SCHEMA`, 기본 `skon_test`)에서 돌며, 매 실행마다 `drop_all` 후 재생성한다. `DB_SCHEMA`와 같으면 픽스처가 실행을 거부한다.
 
 ## 3. 디자인 시스템 적용
 
@@ -68,31 +86,31 @@ Airbnb 컴포넌트를 출장 도메인에 대응시킨다. 이것이 "DESIGN.md
 
 ## 4. 시스템 구조 및 배포
 
-### 운영 — 4개 컨테이너
+### 운영 — 3개 컨테이너
 
 | 서비스 | 이미지 | 역할 |
 |---|---|---|
 | `ingress` | `nginx:1.27-alpine` | 유일한 노출 포트 `:80`. `/` → frontend, `/api/`·`/docs`·`/openapi.json` → backend |
 | `frontend` | 멀티스테이지 (`node:22` 빌드 → `nginx:1.27-alpine` 서빙) | SvelteKit 정적 산출물 |
 | `backend` | `python:3.12-slim` + uv | FastAPI / uvicorn, `:8000` (내부 전용) |
-| `db` | `postgres:16-alpine` | named volume, healthcheck |
 
-기동 순서는 `depends_on` + healthcheck 조합으로 db → backend → frontend → ingress. db는 호스트 포트를 노출하지 않는다.
+DB는 스택에 포함되지 않는다. 기동 순서는 `depends_on` + healthcheck로 backend → frontend → ingress. 백엔드의 DB 접속 정보는 `.env`로 주입하며, 값이 없으면 compose가 기동을 거부한다.
 
 배포 절차: 개발 산출물을 기준으로 운영 서버에서 `docker compose up -d --build` (또는 레지스트리 push 후 `up -d`).
 
-### 로컬 개발 — DB만 컨테이너
+### 로컬 개발 — 컨테이너 없이
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d db   # postgres:16-alpine, 호스트 5432 노출
+cp backend/.env.example backend/.env                # 접속 정보 입력
+cd backend  && uv run python -m app.cli init-db && uv run python -m app.cli seed   # 최초 1회
 cd backend  && uv run uvicorn app.main:app --reload --port 8000
 cd frontend && npm run dev                          # :5173
 ```
 
-- `docker-compose.dev.yml`은 db 서비스 하나만 정의하며 볼륨을 운영과 분리한다 (`skon_pgdata_dev`).
-- backend는 호스트에서 직접 실행한다. `DATABASE_URL=postgresql+asyncpg://skon:skon@localhost:5432/skon`
+- 로컬에서도 외부 운영 DB에 접속한다. 개발용 DB 컨테이너는 두지 않는다.
 - frontend `vite.config.ts`의 proxy가 `/api` → `http://localhost:8000`으로 넘긴다. 로컬에서는 vite proxy가 ingress 역할을 대신하므로 nginx를 띄우지 않는다.
-- `backend/.env.example`(로컬 기준)을 제공하고, 운영 값은 compose `environment`로 주입한다 (`db:5432`).
+- `backend/.env.example`이 템플릿이며, 운영 값은 compose `environment`로 주입한다.
+- 접속 설정 확인은 `GET /api/v1/health/db` — host·database·current_schema를 돌려준다. `/api/v1/health`는 DB에 붙지 않는 liveness 체크로 컨테이너 healthcheck가 쓴다.
 - Dockerfile은 로컬과 동일한 `uv.lock`을 사용해 의존성 드리프트를 막는다.
 
 ### 레이어 경계
@@ -310,10 +328,12 @@ GET    /notifications  ·  POST /notifications/{id}/read
 | 401 | 인증 실패 (토큰/키 없음·만료·폐기) |
 | 403 | 권한 또는 스코프 부족 |
 | 404 | 리소스 없음 (타인 리소스 접근도 404로 처리) |
-| 409 | 상태전이 위반 |
+| 409 | 상태전이 위반, 참조 중인 마스터 데이터 삭제 시도 |
 | 422 | Pydantic 스키마 위반 |
 
 409 응답에 도메인 코드를 실어야 Agent가 재시도 여부를 판단할 수 있다.
+
+**마스터 데이터 삭제.** `department`, `code_group`, `fund_center`, `cost_center`, `user`의 FK에는 `ondelete`를 걸지 않는다. 참조가 남은 채 삭제를 시도하면 PostgreSQL이 거부하는 것이 옳은 동작이기 때문이다. 다만 그대로 두면 `IntegrityError`가 통일 에러 핸들러의 catch-all로 떨어져 `500 INTERNAL_ERROR`가 되므로, Admin CRUD의 삭제 엔드포인트는 `IntegrityError`를 잡아 `ConflictError("HAS_DEPENDENTS", ...)` 즉 409로 변환한다. 또한 `CodeGroup`의 `cascade="all, delete-orphan"`은 ORM 객체 삭제에만 적용되므로, 삭제는 Core의 일괄 `delete()` 문이 아니라 `session.get()` + `session.delete()`로 수행해야 한다.
 
 ## 8. 테스트
 

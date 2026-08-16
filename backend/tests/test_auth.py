@@ -1,0 +1,126 @@
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import select
+
+from app.models import User
+from app.security import create_access_token
+from app.seed import seed_all
+
+
+async def test_login_returns_token_and_user(client, db_session):
+    await seed_all(db_session)
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "user1@skon.example", "password": "skon1234!"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["token_type"] == "bearer"
+    assert payload["access_token"]
+    assert payload["user"]["email"] == "user1@skon.example"
+    assert payload["user"]["role"] == "EMPLOYEE"
+    assert "password_hash" not in payload["user"]
+
+
+async def test_login_with_wrong_password_returns_401(client, db_session):
+    await seed_all(db_session)
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "user1@skon.example", "password": "nope"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
+
+
+async def test_login_with_unknown_email_returns_401(client, db_session):
+    await seed_all(db_session)
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "ghost@skon.example", "password": "skon1234!"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
+
+
+async def test_me_requires_authentication(client, db_session):
+    await seed_all(db_session)
+
+    response = await client.get("/api/v1/auth/me")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "MISSING_CREDENTIALS"
+
+
+async def test_me_returns_current_user(client, db_session):
+    await seed_all(db_session)
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "manager1@skon.example", "password": "skon1234!"},
+    )
+    token = login.json()["access_token"]
+
+    response = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email"] == "manager1@skon.example"
+    assert body["role"] == "MANAGER"
+    assert body["department_name"] == "배터리연구소"
+
+
+async def test_me_rejects_malformed_token(client, db_session):
+    await seed_all(db_session)
+
+    response = await client.get("/api/v1/auth/me", headers={"Authorization": "Bearer nonsense"})
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_TOKEN"
+
+
+async def test_inactive_user_is_rejected_at_login_and_me(client, db_session):
+    await seed_all(db_session)
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "user1@skon.example", "password": "skon1234!"},
+    )
+    token = login.json()["access_token"]
+
+    user = (
+        await db_session.execute(select(User).where(User.email == "user1@skon.example"))
+    ).scalar_one()
+    user.is_active = False
+    await db_session.flush()
+
+    login_after_deactivation = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "user1@skon.example", "password": "skon1234!"},
+    )
+    assert login_after_deactivation.status_code == 401
+    assert login_after_deactivation.json()["error"]["code"] == "INVALID_CREDENTIALS"
+
+    me_response = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_response.status_code == 401
+    assert me_response.json()["error"]["code"] == "INVALID_TOKEN"
+
+
+async def test_me_rejects_expired_token(client, db_session):
+    await seed_all(db_session)
+    user = (
+        await db_session.execute(select(User).where(User.email == "user1@skon.example"))
+    ).scalar_one()
+    expired_token = create_access_token(
+        user_id=user.id, expires_at=datetime.now(timezone.utc) - timedelta(minutes=1)
+    )
+
+    response = await client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {expired_token}"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "TOKEN_EXPIRED"
