@@ -3935,6 +3935,8 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost/trips/42   # SPA fallback →
 
 Expected: 4개 서비스 모두 `running`(db·backend는 `healthy`), health가 `{"status":"ok"}`, 로그인이 `access_token` 반환. 브라우저에서 `http://localhost` 로그인 화면이 뜨고 로그인이 성공할 것.
 
+**Docker Engine 20.10.9 이하 주의.** 해당 버전의 기본 seccomp 프로파일에는 `clone3` 시스템콜이 없어 EPERM으로 거부된다. 백엔드 베이스 `python:3.12-slim`은 Debian bookworm(glibc 2.36)이고 glibc 2.34+는 스레드 생성 시 `clone3`을 먼저 호출하므로, 백엔드가 DB에 붙는 순간 `RuntimeError: can't start new thread`로 죽고 재시작 루프에 빠진다. **메모리 부족과 증상이 비슷하지만 무관하다** — 순정 `python:3.12-slim`에서 `threading.Thread().start()`만 해도 재현되고, VM 메모리를 늘려도 그대로다. 근본 해결은 Docker 업그레이드(20.10.10에서 기본 프로파일에 추가됨)이고, 임시로는 `docker-compose.old-docker.yml`을 함께 지정해 백엔드의 seccomp를 끈다. 격리가 약해지므로 운영에는 쓰지 않는다.
+
 - [ ] **Step 6: 정리**
 
 ```bash
@@ -4053,10 +4055,10 @@ git commit -m "docs: add README with local development instructions"
 
 ## Phase 1 완료 기준
 
-- [ ] `uv run pytest` 전부 통과
-- [ ] `npm test`, `npm run check`, `npm run build` 전부 통과
-- [ ] Task 18 Step 3의 수동 시나리오 7개 전부 확인
-- [ ] Task 17 Step 5의 4-컨테이너 기동 및 `http://localhost` 로그인 확인
+- [x] `uv run pytest` 전부 통과 — 105건
+- [x] `npm test`, `npm run check`, `npm run build` 전부 통과 — 8건 / 0 errors / 빌드 성공
+- [x] Task 18 Step 3의 수동 시나리오 7개 전부 확인 — 실브라우저 + 실백엔드, `/auth/me` 1회, 리다이렉트 루프 없음
+- [x] Task 17 Step 5의 4-컨테이너 기동 및 `http://localhost` 확인 — health · 로그인 · SPA · `/docs` · 딥링크 `/trips/42` 200 · 시드 14/40/785/12 · 재기동 멱등 · db 포트 미노출
 - [ ] spec의 전체 테이블(14개: `department` `user` `code_group` `code` `fund_center` `cost_center` `trip` `corporate_card` `card_transaction` `expense_report` `expense_item` `api_key` `notification` `activity_log`)이 모델로 존재하고 `create_all`로 생성됨
 - [ ] 시드 데이터가 spec 5.9의 수량과 일치
 

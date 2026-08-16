@@ -74,9 +74,32 @@ JWT_SECRET=<32바이트 이상의 임의 문자열>
 POSTGRES_PASSWORD=<실제 비밀번호>
 ```
 
+### 오래된 Docker Engine에서의 주의사항
+
+**Docker Engine 20.10.9 이하**에서는 백엔드 컨테이너가 기동 직후 `RuntimeError: can't start new thread`로 죽고 재시작 루프에 빠진다. 원인은 해당 버전의 기본 seccomp 프로파일에 `clone3` 시스템콜이 없어 EPERM으로 거부되기 때문이다. 백엔드 베이스 이미지 `python:3.12-slim`은 Debian bookworm(glibc 2.36)이고, glibc 2.34+는 스레드 생성 시 `clone3`을 먼저 호출한다. 메모리 부족과는 무관하며, 순정 `python:3.12-slim` 컨테이너에서 `threading.Thread().start()`만 해도 재현된다.
+
+근본 해결은 Docker Engine 업그레이드다 — 20.10.10에서 `clone3`이 기본 프로파일에 추가됐다. 당장 데모를 돌려야 한다면 오버라이드 파일을 함께 지정한다.
+
+```bash
+docker compose -p skon-prod -f docker-compose.yml -f docker-compose.old-docker.yml up -d --build
+```
+
+이 오버라이드는 백엔드 컨테이너의 seccomp를 끄므로 격리가 약해진다. 운영 배포에는 쓰지 말 것.
+
 ### 검증 상태
 
-4컨테이너 스택의 이미지 빌드는 확인됐고 `db` 서비스는 healthy까지 도달한다. 다만 **전체 스택의 실기동 검증은 이 개발 머신의 메모리 부족으로 아직 완료하지 못했다** — 컨테이너 안에서 OS 스레드 생성이 실패하는 상태(순정 `python:3.12-slim`에서도 `RuntimeError: can't start new thread` 재현)라 백엔드가 기동하지 못한다. 코드나 설정 결함이 아니라 호스트 자원 문제이며, 메모리를 확보한 뒤 재검증이 필요하다.
+4컨테이너 스택을 실제로 기동해 ingress(:80) 경유로 다음을 확인했다.
+
+| 항목 | 결과 |
+|---|---|
+| `GET /api/v1/health` | `{"status":"ok"}` |
+| `POST /api/v1/auth/login` | 토큰 + 사용자 객체 반환 |
+| `GET /` | 200, `<title>SK온 출장시스템</title>` |
+| `GET /docs` | 200 |
+| `GET /trips/42` (딥링크) | **200** — SPA fallback 정상 |
+| 운영 DB 시드 | 사용자 14 · 출장 40 · 카드거래 785 · 정산서 12 |
+| 재기동 멱등성 | 행 수 동일 |
+| `db` 호스트 포트 | 미노출 (내부 5432/tcp만) |
 
 ## 스택
 

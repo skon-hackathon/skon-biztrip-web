@@ -1,0 +1,19 @@
+# Docker Engine 20.10.9 이하 전용 오버라이드. 최신 Docker에서는 필요 없다.
+#
+#   docker compose -p skon-prod -f docker-compose.yml -f docker-compose.old-docker.yml up -d --build
+#
+# 왜 필요한가: 20.10.9 이하의 기본 seccomp 프로파일에는 `clone3` 시스템콜이
+# 없어서 EPERM으로 거부된다. 백엔드 이미지 베이스인 python:3.12-slim은 Debian
+# bookworm(glibc 2.36)이고, glibc 2.34+는 스레드 생성 시 clone3을 먼저 호출한다.
+# 그 결과 백엔드가 DB에 붙는 순간 "RuntimeError: can't start new thread"로
+# 죽고 재시작 루프에 빠진다. 메모리와는 무관하다.
+#
+# 근본 해결은 Docker Engine 업그레이드다(20.10.10에서 clone3이 기본 프로파일에
+# 추가됐다). 이 파일은 낡은 Docker가 깔린 머신에서 데모를 돌려보기 위한
+# 한시적 우회이며, seccomp를 끄는 만큼 컨테이너 격리가 약해진다.
+# 운영 배포에는 쓰지 말 것.
+
+services:
+  backend:
+    security_opt:
+      - seccomp:unconfined
