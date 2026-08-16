@@ -9,17 +9,21 @@ SK온 사내 출장시스템을 모사한 데모 웹. 실제 회계·전표 처�
 ## 명령어
 
 ```bash
-# 개발 (DB만 컨테이너, 나머지는 호스트)
-docker compose -f docker-compose.dev.yml -p skon-dev up -d db
+# 개발 (DB는 외부 운영 DB에 접속. backend/.env 필요)
 cd backend && uv run uvicorn app.main:app --reload --port 8000
 cd frontend && npm run dev            # :5173, /api → :8000 프록시
 
+# 스키마·데이터 준비 (수동, 필요할 때만)
+cd backend && uv run python -m app.cli check      # 접속 확인만
+cd backend && uv run python -m app.cli init-db    # 스키마 + 없는 테이블 생성
+cd backend && uv run python -m app.cli seed       # 데모 데이터 (멱등)
+
 # 테스트
-cd backend  && uv run pytest          # 105건
+cd backend  && uv run pytest          # 116건
 cd frontend && npm test               # 8건
 cd frontend && npm run check          # 타입체크, 0 errors 유지
 
-# 배포
+# 배포 (3서비스 — DB는 스택 밖)
 docker compose -p skon-prod up -d --build   # http://localhost
 ```
 
@@ -35,7 +39,13 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 ## 반드시 지킬 것
 
-**compose는 항상 `-p`를 붙인다.** 두 compose 파일이 같은 디렉터리에 있고 둘 다 `db` 서비스를 정의해서 기본 프로젝트명이 겹친다. `-p` 없이 실행한 `docker compose down`은 **개발 DB 컨테이너를 삭제한다.** 실제로 한 번 발생했다. Compose v2.0.0은 최상위 `name:`을 지원하지 않아 파일로는 막을 수 없다.
+**DB는 이 프로젝트가 띄우지 않는다.** 이미 운영 중인 PostgreSQL에 접속하며 `DB_HOST`·`DB_PORT`·`DB_USER`·`DB_PASSWORD`·`DB_NAME`·`DB_SCHEMA`만 주입한다. 접속은 매 커넥션마다 `search_path`를 `DB_SCHEMA` **하나로만** 고정한다 — `public`을 fallback으로 남기면 언퀄리파이드 DDL이 다른 스키마로 새어나가고, 특히 테스트의 `drop_all`이 운영 테이블을 지울 수 있다.
+
+**기동 시 스키마·데이터를 절대 자동으로 건드리지 않는다.** `create_all`도 시드도 `app/cli.py`의 명령을 사람이 실행할 때만 일어난다. 운영 DB에 붙어 있으므로 자동 DDL은 남의 데이터를 위협한다. `lifespan`에 DDL을 되살리지 말 것.
+
+**테스트는 별도 스키마에서 돈다.** `TEST_DB_SCHEMA`(기본 `skon_test`)가 `DB_SCHEMA`와 같으면 픽스처가 실행을 거부한다. 매 세션 `drop_all`을 돌리기 때문이다. 이 가드를 제거하지 말 것.
+
+**스키마명은 DDL에 문자열 보간된다.** 바인드 파라미터로 넘길 수 없어서다. 그래서 `app/config.py`의 `assert_safe_identifier`로 평범한 식별자만 통과시킨다. 새로 스키마명을 받는 경로를 만들면 같은 검증을 통과시킬 것.
 
 **공통코드는 문자열로 저장한다.** `trip.transport_code = 'AIR'`처럼 코드값 문자열을 쓰고 `code.id` FK를 쓰지 않는다. API가 `"transport_code": "AIR"`로 읽혀 Agent가 그대로 쓸 수 있게 하려는 의도다. 대가로 DB 무결성이 없으므로 **모든 쓰기 경로가 `app/services/codes.py`의 검증을 통과해야 한다.**
 
@@ -53,13 +63,13 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 ## 테스트
 
-- `db_session` 픽스처는 각 테스트를 외부 트랜잭션 + savepoint로 감싸 롤백한다. **`conftest.py`를 수정하지 말 것** — 루프 스코프와 `join_transaction_mode`가 리뷰를 거쳐 고정된 값이다.
+- `db_session` 픽스처는 각 테스트를 외부 트랜잭션 + savepoint로 감싸 롤백한다. `conftest.py`에서 **루프 스코프·`join_transaction_mode="create_savepoint"`·테스트 스키마 가드는 건드리지 말 것** — 셋 다 리뷰를 거쳐 고정된 값이고, 각각 이벤트루프 불일치·테스트 간 데이터 누수·운영 스키마 삭제를 막는다.
 - 순수 함수(코드 검증, 상태전이, 자동매칭)는 DB 없이 단위테스트한다.
 - 프론트 테스트는 `client.ts`와 `auth.svelte.ts`만 다룬다. jsdom을 추가하지 말고 `vi.stubGlobal`을 쓴다.
 
 ## 마이그레이션
 
-Alembic을 쓰지 않는다. 기동 시 `create_all` + 멱등 시드다. 스키마를 바꾸면 볼륨을 지우고 재기동한다.
+Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 기존 테이블의 컬럼 변경은 반영하지 않는다. 스키마를 바꾸면 해당 테이블을 지우고 `init-db`를 다시 돌린다.
 
 ## 다음 Phase로 넘어간 항목
 

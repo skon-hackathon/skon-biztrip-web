@@ -12,31 +12,63 @@ SK온 사내 출장시스템을 모사한 데모 웹 애플리케이션. 출장 
 
 | 영역 | 내용 |
 |---|---|
-| 백엔드 | FastAPI, 14테이블 스키마, JWT 인증, 멱등 시드, 테스트 105건 |
+| 백엔드 | FastAPI, 14테이블 스키마, JWT 인증, 수동 시드 CLI, 테스트 116건 |
 | 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰 적용, 로그인·라우트가드·대시보드, 테스트 8건 |
-| 배포 | Dockerfile 2종, nginx ingress, 4서비스 compose |
+| 배포 | Dockerfile 2종, nginx ingress, 3서비스 compose |
 
 출장 목록·정산·개발자 화면은 Phase 2 이후에 추가된다. 상단 내비의 해당 탭은 현재 404다.
 
-## 로컬 개발
+## 데이터베이스
 
-DB만 컨테이너로 띄우고 백엔드·프론트엔드는 호스트에서 실행한다.
+**이 프로젝트는 DB를 직접 띄우지 않는다.** 이미 운영 중인 PostgreSQL에 접속하며, 접속 정보만 환경변수로 주입한다.
+
+`backend/.env` (템플릿은 [`backend/.env.example`](backend/.env.example)):
+
+```
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=skon
+DB_PASSWORD=skon
+DB_NAME=skon
+DB_SCHEMA=skon
+TEST_DB_SCHEMA=skon_test
+JWT_SECRET=<32바이트 이상>
+```
+
+접속은 매 커넥션마다 `search_path`를 `DB_SCHEMA` **하나로만** 고정한다. `public`을 fallback으로 남기지 않으므로 이 앱의 질의나 DDL이 다른 스키마로 새어나갈 수 없다.
+
+### 스키마·데이터 준비는 수동이다
+
+앱은 기동할 때 스키마나 데이터를 **건드리지 않는다.** 운영 DB에 붙기 때문에 자동 `create_all`이나 자동 시드는 남의 데이터를 위협한다. 필요할 때 사람이 명시적으로 실행한다.
 
 ```bash
-# 1. DB 기동 (최초 1회 테스트 DB도 생성)
-docker compose -f docker-compose.dev.yml -p skon-dev up -d db
-docker exec skon-db-dev psql -U skon -d postgres -c "CREATE DATABASE skon_test OWNER skon;"
+cd backend
+uv run python -m app.cli check      # 접속 확인만 (아무것도 바꾸지 않음)
+uv run python -m app.cli init-db    # 스키마 + 없는 테이블 생성 (기존 테이블 보존)
+uv run python -m app.cli seed       # 데모 데이터 적재 (멱등)
+```
 
-# 2. 백엔드 (터미널 1)
+`init-db`는 없는 테이블만 만든다. 기존 테이블의 컬럼 변경은 반영하지 않으므로, 스키마를 바꾸면 해당 테이블을 지우고 다시 만들어야 한다 (Alembic을 쓰지 않는다).
+
+## 로컬 개발
+
+```bash
+# 1. 접속 정보 준비
+cp backend/.env.example backend/.env   # 값을 실제 DB에 맞게 수정
+
+# 2. 최초 1회 스키마·시드
+cd backend && uv run python -m app.cli init-db && uv run python -m app.cli seed
+
+# 3. 백엔드 (터미널 1)
 cd backend && uv run uvicorn app.main:app --reload --port 8000
 
-# 3. 프론트엔드 (터미널 2)
+# 4. 프론트엔드 (터미널 2)
 cd frontend && npm run dev
 ```
 
 브라우저에서 <http://localhost:5173> 접속. `/api` 요청은 vite proxy가 `localhost:8000`으로 넘긴다.
 
-백엔드는 기동 시 테이블을 만들고 시드를 넣는다. 시드는 멱등이라 재기동해도 중복되지 않는다.
+접속 설정이 맞는지는 <http://localhost:8000/api/v1/health/db> 로도 확인할 수 있다 (host·database·current_schema를 돌려준다).
 
 ## 데모 계정
 
@@ -51,27 +83,28 @@ cd frontend && npm run dev
 ## 테스트
 
 ```bash
-cd backend  && uv run pytest          # 105건
+cd backend  && uv run pytest          # 116건
 cd frontend && npm test               # 8건
 cd frontend && npm run check          # 타입체크 (0 errors)
 ```
 
+백엔드 테스트는 같은 DB 서버의 **별도 스키마**(`TEST_DB_SCHEMA`, 기본 `skon_test`)에서 돈다. 매 실행마다 그 스키마를 `drop_all` 후 재생성하므로 **`DB_SCHEMA`와 절대 같으면 안 된다.** 같으면 픽스처가 실행 자체를 거부한다.
+
 ## 배포
 
-프론트엔드 · 백엔드 · DB · ingress 4개 컨테이너를 빌드해 기동한다. 노출 포트는 ingress `:80` 하나뿐이고 DB는 호스트 포트를 열지 않는다.
+프론트엔드 · 백엔드 · ingress 3개 컨테이너를 빌드해 기동한다. DB는 스택 밖에 있다. 노출 포트는 ingress `:80` 하나뿐이다.
 
 ```bash
 docker compose -p skon-prod up -d --build   # http://localhost
 docker compose -p skon-prod down
 ```
 
-> **`-p skon-prod`를 반드시 붙일 것.** 이 저장소에는 compose 파일이 둘 있고 같은 디렉터리에 있어 기본 프로젝트명이 겹친다. 두 파일 모두 `db` 서비스를 정의하므로, `-p` 없이 실행한 `docker compose down`은 프로젝트 라벨만 보고 **개발 DB 컨테이너까지 삭제한다.** Compose v2.0.0은 최상위 `name:` 속성을 지원하지 않아 파일에 고정할 수 없으므로, 호출 시 `-p`가 유일한 방어책이다. 개발 쪽도 대칭적으로 `-p skon-dev`를 쓴다.
+접속 정보는 저장소 루트의 `.env`로 주입한다. `DB_HOST`·`DB_USER`·`DB_PASSWORD`·`DB_NAME`·`JWT_SECRET`은 값이 없으면 compose가 기동을 거부한다.
 
-운영 서버에서는 `.env`로 실제 값을 지정한다. 기본값은 명백한 placeholder이며 그대로 쓰면 안 된다.
+컨테이너 안에서 CLI를 쓰려면:
 
-```
-JWT_SECRET=<32바이트 이상의 임의 문자열>
-POSTGRES_PASSWORD=<실제 비밀번호>
+```bash
+docker compose -p skon-prod exec backend uv run --no-dev python -m app.cli check
 ```
 
 ### 오래된 Docker Engine에서의 주의사항
@@ -85,21 +118,6 @@ docker compose -p skon-prod -f docker-compose.yml -f docker-compose.old-docker.y
 ```
 
 이 오버라이드는 백엔드 컨테이너의 seccomp를 끄므로 격리가 약해진다. 운영 배포에는 쓰지 말 것.
-
-### 검증 상태
-
-4컨테이너 스택을 실제로 기동해 ingress(:80) 경유로 다음을 확인했다.
-
-| 항목 | 결과 |
-|---|---|
-| `GET /api/v1/health` | `{"status":"ok"}` |
-| `POST /api/v1/auth/login` | 토큰 + 사용자 객체 반환 |
-| `GET /` | 200, `<title>SK온 출장시스템</title>` |
-| `GET /docs` | 200 |
-| `GET /trips/42` (딥링크) | **200** — SPA fallback 정상 |
-| 운영 DB 시드 | 사용자 14 · 출장 40 · 카드거래 785 · 정산서 12 |
-| 재기동 멱등성 | 행 수 동일 |
-| `db` 호스트 포트 | 미노출 (내부 5432/tcp만) |
 
 ## 스택
 

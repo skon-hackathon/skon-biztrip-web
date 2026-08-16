@@ -1,20 +1,38 @@
+import os
 from collections.abc import AsyncGenerator
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db import get_db
+from app.config import assert_safe_identifier, get_settings
+from app.db import build_engine, get_db
 from app.main import app
 from app.models import Base
 
-TEST_DATABASE_URL = "postgresql+asyncpg://skon:skon@localhost:5432/skon_test"
+#: 테스트는 앱과 같은 DB 서버의 **별도 스키마**에서 돈다. 절대 앱 스키마를 쓰지 않는다.
+TEST_SCHEMA = os.getenv("TEST_DB_SCHEMA", "skon_test")
 
 
 @pytest.fixture(scope="session")
 async def test_engine():
-    engine = create_async_engine(TEST_DATABASE_URL, future=True)
+    settings = get_settings()
+    assert_safe_identifier(TEST_SCHEMA, field="TEST_DB_SCHEMA")
+
+    # 이 가드가 없으면 아래 drop_all이 운영 스키마의 테이블을 통째로 지운다.
+    if TEST_SCHEMA == settings.db_schema:
+        pytest.exit(
+            f"TEST_DB_SCHEMA({TEST_SCHEMA})가 앱의 DB_SCHEMA와 같습니다. "
+            "테스트는 매 실행마다 drop_all을 수행하므로 반드시 다른 스키마를 지정하십시오.",
+            returncode=1,
+        )
+
+    # build_engine은 search_path를 이 스키마 하나로만 고정한다. public이 fallback으로
+    # 남지 않으므로 언퀄리파이드 DDL이 다른 스키마로 새어나갈 수 없다.
+    engine = build_engine(settings.database_url, TEST_SCHEMA)
     async with engine.begin() as conn:
+        await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{TEST_SCHEMA}"'))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     yield engine
