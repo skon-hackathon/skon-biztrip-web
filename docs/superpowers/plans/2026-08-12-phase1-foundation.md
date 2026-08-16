@@ -3884,7 +3884,7 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+asyncpg://skon:${POSTGRES_PASSWORD:-skon}@db:5432/skon
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-please-set-me}
       SEED_ON_STARTUP: "true"
     depends_on:
       db:
@@ -3923,19 +3923,22 @@ volumes:
 - [ ] **Step 5: 전체 스택 기동 확인**
 
 ```bash
-docker compose up -d --build
-docker compose ps
+docker compose -p skon-prod up -d --build
+docker compose -p skon-prod ps
 curl -s localhost/api/v1/health
 curl -s -X POST localhost/api/v1/auth/login -H 'Content-Type: application/json' \
   -d '{"email":"user1@skon.example","password":"skon1234!"}'
+curl -s -o /dev/null -w '%{http_code}\n' localhost/trips/42   # SPA fallback → 200 (404 아님)
 ```
+
+**`-p skon-prod`를 반드시 붙인다.** 이 저장소에는 compose 파일이 둘(운영 `docker-compose.yml`, 개발 `docker-compose.dev.yml`) 있고 같은 디렉터리에 있어 기본 프로젝트명이 같아진다. 두 파일 모두 `db` 서비스를 정의하므로, `-p` 없이 실행한 `docker compose down`은 프로젝트 라벨만 보고 **개발 DB 컨테이너까지 삭제한다** — 실제로 발생했다(볼륨은 남아 데이터는 보존됐다). 최상위 `name:` 속성으로 파일에 고정하는 방법은 Compose v2.0.0이 지원하지 않으므로(`Additional property name is not allowed`), 호출 시 `-p`가 유일한 방어책이다. 개발 쪽도 대칭적으로 `-p skon-dev`를 쓴다. 두 compose 파일 상단에 같은 취지의 주석을 넣어 두었다.
 
 Expected: 4개 서비스 모두 `running`(db·backend는 `healthy`), health가 `{"status":"ok"}`, 로그인이 `access_token` 반환. 브라우저에서 `http://localhost` 로그인 화면이 뜨고 로그인이 성공할 것.
 
 - [ ] **Step 6: 정리**
 
 ```bash
-docker compose down
+docker compose -p skon-prod down
 ```
 
 - [ ] **Step 7: 커밋**

@@ -1,3 +1,11 @@
+# 로컬 개발용 — DB 하나만 띄운다. 반드시 프로젝트명을 명시해서 실행한다:
+#
+#   docker compose -f docker-compose.dev.yml -p skon-dev up -d db
+#   docker compose -f docker-compose.dev.yml -p skon-dev down
+#
+# 운영 compose와 기본 프로젝트명이 겹쳐 서로의 컨테이너를 지울 수 있다.
+# 자세한 이유는 docker-compose.yml 상단 주석 참고.
+
 services:
   db:
     image: postgres:16-alpine
