@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ValidationError
+from app.schemas.center import CenterOut
 from app.models import CostCenter, FundCenter
 
 CenterModel = type[FundCenter] | type[CostCenter]
@@ -38,3 +39,22 @@ async def assert_cost_center(
         raise ValidationError(
             "INVALID_COST_CENTER", f"사용할 수 없는 코스트센터입니다: {code}", field=field
         )
+
+
+async def load_active_centers(session: AsyncSession, model: CenterModel) -> list[CenterOut]:
+    """활성 센터를 코드 순으로 돌려준다.
+
+    load_active_center_codes와 달리 이름·부서까지 필요해서 엔티티를 읽는다 — 화면
+    드롭다운은 코드만으로는 못 쓴다. 쿼리를 라우터에 두지 않는 이유는 is_active 필터가
+    두 곳에 생기면 나중에 한쪽만 고치기 때문이다.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(model).where(model.is_active.is_(True)).order_by(model.code)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [CenterOut.model_validate(row) for row in rows]

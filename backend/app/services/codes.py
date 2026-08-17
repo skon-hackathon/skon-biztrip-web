@@ -3,8 +3,9 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import ValidationError
+from app.errors import NotFoundError, ValidationError
 from app.models import Code, CodeGroup
+from app.schemas.code import CodeGroupOut, CodeOut
 
 #: (group_code, 응답 field 이름, 검증할 값)
 CodeSpec = tuple[str, str, str | None]
@@ -95,3 +96,47 @@ async def validate_codes(session: AsyncSession, specs: Sequence[CodeSpec]) -> No
             allowed.get(group_id_by_code[group_code], set()),
             field=field,
         )
+
+
+def _to_group_out(group: CodeGroup) -> CodeGroupOut:
+    """CodeGroup.codes는 lazy="selectin"이라 그룹 조회 한 번에 함께 실려온다.
+    비활성 코드는 여기서 걸러낸다 — 관리자만 보는 값을 폼 드롭다운에 내보내지 않는다."""
+    return CodeGroupOut(
+        group_code=group.group_code,
+        name=group.name,
+        description=group.description,
+        codes=[
+            CodeOut(code=code.code, name=code.name, sort_order=code.sort_order, extra=code.extra)
+            for code in sorted(
+                (code for code in group.codes if code.is_active), key=lambda c: c.sort_order
+            )
+        ],
+    )
+
+
+async def load_code_groups(session: AsyncSession) -> list[CodeGroupOut]:
+    groups = (
+        (
+            await session.execute(
+                select(CodeGroup)
+                .where(CodeGroup.is_active.is_(True))
+                .order_by(CodeGroup.group_code)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_to_group_out(group) for group in groups]
+
+
+async def load_code_group(session: AsyncSession, group_code: str) -> CodeGroupOut:
+    group = (
+        await session.execute(
+            select(CodeGroup).where(
+                CodeGroup.group_code == group_code, CodeGroup.is_active.is_(True)
+            )
+        )
+    ).scalar_one_or_none()
+    if group is None:
+        raise NotFoundError("CODE_GROUP_NOT_FOUND", f"존재하지 않는 코드그룹입니다: {group_code}")
+    return _to_group_out(group)
