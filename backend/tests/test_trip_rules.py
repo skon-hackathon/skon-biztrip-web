@@ -1,8 +1,10 @@
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
+import app.services.trip_rules as trip_rules_module
 from app.enums import TripStatus, UserRole
 from app.errors import ConflictError, ForbiddenError, ValidationError
 from app.services.trip_rules import (
@@ -15,10 +17,15 @@ from app.services.trip_rules import (
     assert_estimated_cost,
     assert_has_approver,
     assert_reject_reason,
+    assert_transition_allowed,
     assert_trip_approver,
     assert_trip_owner,
     can_view_trip,
 )
+
+#: assert_transition_allowed 테스트에서 쓰는 고정 신청자/결재자 id.
+OWNER_ID = 1
+APPROVER_ID = 9
 
 
 def test_date_range_accepts_same_day():
@@ -164,3 +171,73 @@ def test_assert_has_approver_rejects_none():
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "NO_APPROVER"
+
+
+def test_transition_actor_guard_fires_on_missing_entry():
+    """TRANSITION_ACTOR에서 엔트리 하나를 지운 변형 소스를 exec하면 임포트 시점 가드가
+    RuntimeError를 던져야 한다. 실제 파일은 건드리지 않는다 — 소스 텍스트를 메모리에서
+    수정해 재실행할 뿐이다."""
+    module_path = Path(trip_rules_module.__file__)
+    source = module_path.read_text()
+    target_line = "    (TripStatus.COMPLETED, TripStatus.SETTLED): TransitionActor.SYSTEM,\n"
+    assert target_line in source, "TRANSITION_ACTOR 엔트리 텍스트가 바뀌어 이 테스트를 갱신해야 합니다"
+    broken_source = source.replace(target_line, "", 1)
+
+    with pytest.raises(RuntimeError):
+        exec(  # noqa: S102 - 의도된 동적 실행: 임포트 시점 가드를 재현하기 위함
+            compile(broken_source, str(module_path), "exec"),
+            {"__name__": "trip_rules_broken_for_test"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("current", "target", "actor_user_id", "wrong_user_id", "wrong_code"),
+    [
+        (TripStatus.DRAFT, TripStatus.SUBMITTED, OWNER_ID, APPROVER_ID, "NOT_TRIP_OWNER"),
+        (TripStatus.SUBMITTED, TripStatus.APPROVED, APPROVER_ID, OWNER_ID, "NOT_TRIP_APPROVER"),
+        (TripStatus.SUBMITTED, TripStatus.REJECTED, APPROVER_ID, OWNER_ID, "NOT_TRIP_APPROVER"),
+        (TripStatus.REJECTED, TripStatus.DRAFT, OWNER_ID, APPROVER_ID, "NOT_TRIP_OWNER"),
+        (TripStatus.APPROVED, TripStatus.COMPLETED, OWNER_ID, APPROVER_ID, "NOT_TRIP_OWNER"),
+    ],
+)
+def test_assert_transition_allowed_gates_on_actor(
+    current, target, actor_user_id, wrong_user_id, wrong_code
+):
+    assert_transition_allowed(
+        current, target, user_id=actor_user_id, owner_id=OWNER_ID, approver_id=APPROVER_ID
+    )
+
+    with pytest.raises(ForbiddenError) as exc_info:
+        assert_transition_allowed(
+            current, target, user_id=wrong_user_id, owner_id=OWNER_ID, approver_id=APPROVER_ID
+        )
+
+    assert exc_info.value.code == wrong_code
+
+
+@pytest.mark.parametrize("user_id", [OWNER_ID, APPROVER_ID])
+def test_assert_transition_allowed_rejects_settled_for_any_user(user_id):
+    with pytest.raises(ForbiddenError) as exc_info:
+        assert_transition_allowed(
+            TripStatus.COMPLETED,
+            TripStatus.SETTLED,
+            user_id=user_id,
+            owner_id=OWNER_ID,
+            approver_id=APPROVER_ID,
+        )
+
+    assert exc_info.value.code == "SYSTEM_TRANSITION_ONLY"
+
+
+def test_assert_transition_allowed_rejects_illegal_transition_for_correct_actor():
+    with pytest.raises(ConflictError) as exc_info:
+        assert_transition_allowed(
+            TripStatus.DRAFT,
+            TripStatus.APPROVED,
+            user_id=OWNER_ID,
+            owner_id=OWNER_ID,
+            approver_id=APPROVER_ID,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "TRIP_INVALID_TRANSITION"

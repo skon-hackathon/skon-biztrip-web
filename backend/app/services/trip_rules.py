@@ -7,9 +7,11 @@
 
 from datetime import date
 from decimal import Decimal
+from enum import StrEnum
 
 from app.enums import TripStatus, UserRole
 from app.errors import ConflictError, ForbiddenError, ValidationError
+from app.services.trip_status import ALLOWED_TRANSITIONS, assert_trip_transition
 
 #: 수정 가능한 상태. REJECTED에서 고쳐도 상태는 그대로 REJECTED로 남는다 — 곧바로
 #: 다시 상신할 수는 없고, reopen_trip으로 DRAFT로 되돌린 뒤에야 상신할 수 있다.
@@ -100,3 +102,60 @@ def assert_has_approver(manager_id: int | None) -> int:
     if manager_id is None:
         raise ConflictError("NO_APPROVER", "결재자가 지정되지 않아 상신할 수 없습니다")
     return manager_id
+
+
+class TransitionActor(StrEnum):
+    OWNER = "OWNER"
+    APPROVER = "APPROVER"
+    SYSTEM = "SYSTEM"
+
+
+#: 각 전이를 수행할 수 있는 주체. ALLOWED_TRANSITIONS(trip_status.py)의 (현재, 목표) 쌍과
+#: 키가 정확히 일치해야 한다 — 아래 가드가 그 일치를 임포트 시점에 강제한다. 전이를
+#: 추가하면서 여기 엔트리를 빠뜨리면, 조용히 통과하는 대신 임포트 자체가 깨진다.
+TRANSITION_ACTOR: dict[tuple[TripStatus, TripStatus], TransitionActor] = {
+    (TripStatus.DRAFT, TripStatus.SUBMITTED): TransitionActor.OWNER,
+    (TripStatus.SUBMITTED, TripStatus.APPROVED): TransitionActor.APPROVER,
+    (TripStatus.SUBMITTED, TripStatus.REJECTED): TransitionActor.APPROVER,
+    (TripStatus.REJECTED, TripStatus.DRAFT): TransitionActor.OWNER,
+    (TripStatus.APPROVED, TripStatus.COMPLETED): TransitionActor.OWNER,
+    (TripStatus.COMPLETED, TripStatus.SETTLED): TransitionActor.SYSTEM,
+}
+
+_all_transitions = {
+    (current, target) for current, targets in ALLOWED_TRANSITIONS.items() for target in targets
+}
+_missing_actors = _all_transitions - set(TRANSITION_ACTOR)
+_extra_actors = set(TRANSITION_ACTOR) - _all_transitions
+if _missing_actors or _extra_actors:
+    raise RuntimeError(
+        "TRANSITION_ACTOR가 ALLOWED_TRANSITIONS와 어긋납니다: "
+        f"missing={_missing_actors} extra={_extra_actors}"
+    )
+
+
+def assert_transition_allowed(
+    current: TripStatus,
+    target: TripStatus,
+    *,
+    user_id: int,
+    owner_id: int,
+    approver_id: int | None,
+) -> None:
+    """전이의 적법성과 수행 주체를 한 번에 검사한다.
+
+    호출부가 두 검사를 따로 부르면 언젠가 한쪽을 빠뜨리고, 그 실패는 조용하다 —
+    load_visible_trip을 이미 통과한 결재자가 신청자만 할 수 있는 전이를 수행하게 된다.
+
+    적법성을 권한보다 먼저 검사한다: 결재자가 DRAFT 상태의 출장에 승인을 시도하면
+    TRIP_INVALID_TRANSITION(409)이 권한 오류보다 더 실질적인 답이다 — 그 결재자는
+    어차피 이 출장을 볼 수 있으므로 상태를 감출 이유가 없다.
+    """
+    assert_trip_transition(current, target)
+    actor = TRANSITION_ACTOR[(current, target)]
+    if actor is TransitionActor.OWNER:
+        assert_trip_owner(user_id=user_id, owner_id=owner_id)
+    elif actor is TransitionActor.APPROVER:
+        assert_trip_approver(user_id=user_id, approver_id=approver_id)
+    else:
+        raise ForbiddenError("SYSTEM_TRANSITION_ONLY", "이 전이는 시스템에 의해서만 수행됩니다")
