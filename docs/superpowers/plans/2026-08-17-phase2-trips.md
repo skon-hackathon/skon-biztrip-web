@@ -3445,7 +3445,7 @@ async def get_timeline(trip_id: int, user: CurrentUser, session: DbSession) -> l
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_trips_transitions_api.py -v`
-Expected: 9 passed
+Expected: 12 passed
 
 - [ ] **Step 5: 커밋**
 

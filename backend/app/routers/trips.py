@@ -6,7 +6,14 @@ from fastapi import APIRouter, Query, status
 from app.deps import CurrentUser, DbSession
 from app.enums import TripStatus
 from app.schemas.common import Page
-from app.schemas.trip import TripCreate, TripDetail, TripListItem, TripUpdate
+from app.schemas.trip import (
+    RejectRequest,
+    TimelineEntry,
+    TripCreate,
+    TripDetail,
+    TripListItem,
+    TripUpdate,
+)
 from app.services import trips as trip_service
 
 router = APIRouter(prefix="/api/v1/trips", tags=["trips"])
@@ -65,3 +72,35 @@ async def update_trip(
 @router.delete("/{trip_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_trip(trip_id: int, user: CurrentUser, session: DbSession) -> None:
     await trip_service.delete_trip(session, user=user, trip_id=trip_id)
+
+
+@router.post("/{trip_id}/submit", response_model=TripDetail)
+async def submit_trip(trip_id: int, user: CurrentUser, session: DbSession) -> TripDetail:
+    return await trip_service.submit_trip(session, user=user, trip_id=trip_id)
+
+
+@router.post("/{trip_id}/approve", response_model=TripDetail)
+async def approve_trip(trip_id: int, user: CurrentUser, session: DbSession) -> TripDetail:
+    return await trip_service.approve_trip(session, user=user, trip_id=trip_id)
+
+
+@router.post("/{trip_id}/reject", response_model=TripDetail)
+async def reject_trip(
+    trip_id: int, payload: RejectRequest, user: CurrentUser, session: DbSession
+) -> TripDetail:
+    return await trip_service.reject_trip(session, user=user, trip_id=trip_id, payload=payload)
+
+
+@router.post("/{trip_id}/reopen", response_model=TripDetail)
+async def reopen_trip(trip_id: int, user: CurrentUser, session: DbSession) -> TripDetail:
+    return await trip_service.reopen_trip(session, user=user, trip_id=trip_id)
+
+
+@router.post("/{trip_id}/complete", response_model=TripDetail)
+async def complete_trip(trip_id: int, user: CurrentUser, session: DbSession) -> TripDetail:
+    return await trip_service.complete_trip(session, user=user, trip_id=trip_id)
+
+
+@router.get("/{trip_id}/timeline", response_model=list[TimelineEntry])
+async def get_timeline(trip_id: int, user: CurrentUser, session: DbSession) -> list[TimelineEntry]:
+    return await trip_service.list_timeline(session, user=user, trip_id=trip_id)
