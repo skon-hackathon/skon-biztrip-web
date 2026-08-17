@@ -11,11 +11,23 @@ from decimal import Decimal
 from app.enums import TripStatus, UserRole
 from app.errors import ConflictError, ForbiddenError, ValidationError
 
-#: 신청자가 내용을 고칠 수 있는 상태. 반려된 출장은 고쳐서 다시 상신하는 것이 정상 경로다.
+#: 수정 가능한 상태. REJECTED에서 고쳐도 상태는 그대로 REJECTED로 남는다 — 곧바로
+#: 다시 상신할 수는 없고, reopen_trip으로 DRAFT로 되돌린 뒤에야 상신할 수 있다.
+#: 정상 경로는 수정 → reopen → 상신이다.
 EDITABLE_STATUSES = frozenset({TripStatus.DRAFT, TripStatus.REJECTED})
 
+#: 삭제 가능한 상태. assert_editable과 판단 방식을 맞추기 위해 `is not` 대신 멤버십으로
+#: 검사한다 — 지금은 컬럼이 SAEnum(TripStatus)라 관측되지 않는 차이지만, 굳이 다르게
+#: 둘 이유가 없다.
+DELETABLE_STATUSES = frozenset({TripStatus.DRAFT})
 
-def assert_date_range(start_date: date, end_date: date) -> None:
+#: Trip.estimated_cost는 Numeric(14, 2) — 정수부 12자리가 최대다. 넘으면 flush에서
+#: Postgres numeric overflow가 나고 통일 핸들러의 catch-all에 걸려 500이 된다.
+#: Agent는 5xx를 재시도하므로, 절대 성공할 수 없는 요청에 재시도 루프가 걸린다.
+MAX_ESTIMATED_COST = Decimal("999999999999.99")
+
+
+def assert_date_range(*, start_date: date, end_date: date) -> None:
     if end_date < start_date:
         raise ValidationError(
             "INVALID_DATE_RANGE", "종료일은 시작일보다 빠를 수 없습니다", field="end_date"
@@ -27,9 +39,15 @@ def assert_estimated_cost(estimated_cost: Decimal) -> None:
         raise ValidationError(
             "INVALID_AMOUNT", "예상 비용은 0 이상이어야 합니다", field="estimated_cost"
         )
+    if estimated_cost > MAX_ESTIMATED_COST:
+        raise ValidationError(
+            "INVALID_AMOUNT",
+            f"예상 비용은 {MAX_ESTIMATED_COST}를 넘을 수 없습니다",
+            field="estimated_cost",
+        )
 
 
-def can_view(*, user_id: int, role: UserRole, owner_id: int, approver_id: int | None) -> bool:
+def can_view_trip(*, user_id: int, role: UserRole, owner_id: int, approver_id: int | None) -> bool:
     """신청자·결재자·ADMIN만 출장을 볼 수 있다.
 
     이 판정이 False면 호출부는 403이 아니라 **404**를 낸다. 타인 리소스의 존재 자체를
@@ -40,7 +58,7 @@ def can_view(*, user_id: int, role: UserRole, owner_id: int, approver_id: int | 
     return user_id == owner_id or (approver_id is not None and user_id == approver_id)
 
 
-def assert_owner(*, user_id: int, owner_id: int) -> None:
+def assert_trip_owner(*, user_id: int, owner_id: int) -> None:
     if user_id != owner_id:
         raise ForbiddenError("NOT_TRIP_OWNER", "본인이 신청한 출장만 처리할 수 있습니다")
 
@@ -56,7 +74,7 @@ def assert_editable(status: TripStatus) -> None:
 
 
 def assert_deletable(status: TripStatus) -> None:
-    if status is not TripStatus.DRAFT:
+    if status not in DELETABLE_STATUSES:
         raise ConflictError("TRIP_NOT_DELETABLE", "임시저장 상태의 출장만 삭제할 수 있습니다")
 
 
