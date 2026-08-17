@@ -792,20 +792,20 @@ from app.services.trip_rules import (
     assert_editable,
     assert_estimated_cost,
     assert_has_approver,
-    assert_owner,
+    assert_trip_owner,
     assert_reject_reason,
     assert_trip_approver,
-    can_view,
+    can_view_trip,
 )
 
 
 def test_date_range_accepts_same_day():
-    assert_date_range(date(2026, 9, 1), date(2026, 9, 1))
+    assert_date_range(start_date=date(2026, 9, 1), end_date=date(2026, 9, 1))
 
 
 def test_date_range_rejects_end_before_start():
     with pytest.raises(ValidationError) as exc_info:
-        assert_date_range(date(2026, 9, 3), date(2026, 9, 1))
+        assert_date_range(start_date=date(2026, 9, 3), end_date=date(2026, 9, 1))
 
     error = exc_info.value
     assert error.status_code == 400
@@ -827,23 +827,23 @@ def test_estimated_cost_rejects_negative():
 
 @pytest.mark.parametrize("role", [UserRole.EMPLOYEE, UserRole.MANAGER])
 def test_owner_and_approver_can_view(role):
-    assert can_view(user_id=1, role=role, owner_id=1, approver_id=9) is True
-    assert can_view(user_id=9, role=role, owner_id=1, approver_id=9) is True
-    assert can_view(user_id=5, role=role, owner_id=1, approver_id=9) is False
+    assert can_view_trip(user_id=1, role=role, owner_id=1, approver_id=9) is True
+    assert can_view_trip(user_id=9, role=role, owner_id=1, approver_id=9) is True
+    assert can_view_trip(user_id=5, role=role, owner_id=1, approver_id=9) is False
 
 
 def test_admin_can_view_anything():
-    assert can_view(user_id=5, role=UserRole.ADMIN, owner_id=1, approver_id=9) is True
+    assert can_view_trip(user_id=5, role=UserRole.ADMIN, owner_id=1, approver_id=9) is True
 
 
 def test_can_view_handles_missing_approver():
-    assert can_view(user_id=1, role=UserRole.EMPLOYEE, owner_id=1, approver_id=None) is True
-    assert can_view(user_id=2, role=UserRole.EMPLOYEE, owner_id=1, approver_id=None) is False
+    assert can_view_trip(user_id=1, role=UserRole.EMPLOYEE, owner_id=1, approver_id=None) is True
+    assert can_view_trip(user_id=2, role=UserRole.EMPLOYEE, owner_id=1, approver_id=None) is False
 
 
 def test_assert_owner_rejects_other_user():
     with pytest.raises(ForbiddenError) as exc_info:
-        assert_owner(user_id=2, owner_id=1)
+        assert_trip_owner(user_id=2, owner_id=1)
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.code == "NOT_TRIP_OWNER"
@@ -946,11 +946,23 @@ from decimal import Decimal
 from app.enums import TripStatus, UserRole
 from app.errors import ConflictError, ForbiddenError, ValidationError
 
-#: 신청자가 내용을 고칠 수 있는 상태. 반려된 출장은 고쳐서 다시 상신하는 것이 정상 경로다.
+#: 신청자가 내용을 고칠 수 있는 상태. 반려된 출장은 고쳐서 되살리는 것이 정상 경로다 —
+#: 다만 수정만으로는 REJECTED에 머무르고, reopen으로 DRAFT를 거쳐야 다시 상신할 수 있다.
 EDITABLE_STATUSES = frozenset({TripStatus.DRAFT, TripStatus.REJECTED})
 
+#: 삭제는 임시저장만. EDITABLE_STATUSES와 같은 모양으로 둔다 — 한쪽만 `is` 비교를 쓰면
+#: StrEnum이 값으로 해시되기 때문에 raw 문자열에서 두 함수의 판정이 갈린다.
+DELETABLE_STATUSES = frozenset({TripStatus.DRAFT})
 
-def assert_date_range(start_date: date, end_date: date) -> None:
+#: Trip.estimated_cost는 Numeric(14, 2) — 정수부 12자리가 최대다. 넘으면 flush에서
+#: Postgres numeric overflow가 나고 통일 핸들러의 catch-all에 걸려 500이 된다.
+#: Agent는 5xx를 재시도하므로 절대 성공할 수 없는 요청에 재시도 루프가 걸린다.
+MAX_ESTIMATED_COST = Decimal("999999999999.99")
+
+
+def assert_date_range(*, start_date: date, end_date: date) -> None:
+    # 키워드 전용이다. date 두 개를 위치로 받으면 인자를 바꿔 넘겼을 때 규칙이
+    # 조용히 뒤집힌다.
     if end_date < start_date:
         raise ValidationError(
             "INVALID_DATE_RANGE", "종료일은 시작일보다 빠를 수 없습니다", field="end_date"
@@ -962,9 +974,15 @@ def assert_estimated_cost(estimated_cost: Decimal) -> None:
         raise ValidationError(
             "INVALID_AMOUNT", "예상 비용은 0 이상이어야 합니다", field="estimated_cost"
         )
+    if estimated_cost > MAX_ESTIMATED_COST:
+        raise ValidationError(
+            "INVALID_AMOUNT",
+            f"예상 비용은 {MAX_ESTIMATED_COST} 이하여야 합니다",
+            field="estimated_cost",
+        )
 
 
-def can_view(*, user_id: int, role: UserRole, owner_id: int, approver_id: int | None) -> bool:
+def can_view_trip(*, user_id: int, role: UserRole, owner_id: int, approver_id: int | None) -> bool:
     """신청자·결재자·ADMIN만 출장을 볼 수 있다.
 
     이 판정이 False면 호출부는 403이 아니라 **404**를 낸다. 타인 리소스의 존재 자체를
@@ -975,7 +993,7 @@ def can_view(*, user_id: int, role: UserRole, owner_id: int, approver_id: int | 
     return user_id == owner_id or (approver_id is not None and user_id == approver_id)
 
 
-def assert_owner(*, user_id: int, owner_id: int) -> None:
+def assert_trip_owner(*, user_id: int, owner_id: int) -> None:
     if user_id != owner_id:
         raise ForbiddenError("NOT_TRIP_OWNER", "본인이 신청한 출장만 처리할 수 있습니다")
 
@@ -991,7 +1009,7 @@ def assert_editable(status: TripStatus) -> None:
 
 
 def assert_deletable(status: TripStatus) -> None:
-    if status is not TripStatus.DRAFT:
+    if status not in DELETABLE_STATUSES:
         raise ConflictError("TRIP_NOT_DELETABLE", "임시저장 상태의 출장만 삭제할 수 있습니다")
 
 
@@ -1017,12 +1035,92 @@ def assert_has_approver(manager_id: int | None) -> int:
     if manager_id is None:
         raise ConflictError("NO_APPROVER", "결재자가 지정되지 않아 상신할 수 없습니다")
     return manager_id
+
+
+class TransitionActor(StrEnum):
+    OWNER = "OWNER"
+    APPROVER = "APPROVER"
+    SYSTEM = "SYSTEM"
+
+
+#: 각 전이를 수행할 수 있는 주체. ALLOWED_TRANSITIONS와 키가 정확히 일치해야 한다.
+TRANSITION_ACTOR: dict[tuple[TripStatus, TripStatus], TransitionActor] = {
+    (TripStatus.DRAFT, TripStatus.SUBMITTED): TransitionActor.OWNER,
+    (TripStatus.SUBMITTED, TripStatus.APPROVED): TransitionActor.APPROVER,
+    (TripStatus.SUBMITTED, TripStatus.REJECTED): TransitionActor.APPROVER,
+    (TripStatus.REJECTED, TripStatus.DRAFT): TransitionActor.OWNER,
+    (TripStatus.APPROVED, TripStatus.COMPLETED): TransitionActor.OWNER,
+    (TripStatus.COMPLETED, TripStatus.SETTLED): TransitionActor.SYSTEM,
+}
+
+# trip_status.py의 _missing 가드와 같은 이유로 import 시점에 확인한다. 새 전이를 추가하고
+# 주체를 빠뜨리면 조용히 "아무나 가능"이 되는 것이 아니라 여기서 죽어야 한다.
+_legal_transitions = {
+    (current, target)
+    for current, targets in ALLOWED_TRANSITIONS.items()
+    for target in targets
+}
+if _legal_transitions != set(TRANSITION_ACTOR):
+    raise RuntimeError(
+        "TRANSITION_ACTOR와 ALLOWED_TRANSITIONS의 전이 목록이 다릅니다: "
+        f"{_legal_transitions ^ set(TRANSITION_ACTOR)}"
+    )
+
+
+def assert_transition_allowed(
+    current: TripStatus,
+    target: TripStatus,
+    *,
+    user_id: int,
+    owner_id: int,
+    approver_id: int | None,
+) -> None:
+    """전이의 적법성과 수행 주체를 한 번에 검사한다.
+
+    호출부가 두 검사를 따로 부르면 언젠가 한쪽을 빠뜨리고, 그 실패는 조용하다 —
+    load_visible_trip을 이미 통과한 결재자가 신청자만 할 수 있는 전이를 수행하게 된다.
+    권한 검사가 fail-open이 되지 않도록 두 판단을 한 함수에 묶는다.
+
+    적법성을 먼저 본다. 결재자가 DRAFT 출장에 approve를 걸면 "권한 없음"보다
+    TRIP_INVALID_TRANSITION(409)이 더 쓸모 있는 답이고, 어차피 그 결재자는 상태를
+    이미 볼 수 있으므로 상태를 알려주는 것이 정보 노출도 아니다.
+    """
+    assert_trip_transition(current, target)
+
+    actor = TRANSITION_ACTOR[(current, target)]
+    if actor is TransitionActor.OWNER:
+        assert_trip_owner(user_id=user_id, owner_id=owner_id)
+    elif actor is TransitionActor.APPROVER:
+        assert_trip_approver(user_id=user_id, approver_id=approver_id)
+    else:
+        # COMPLETED → SETTLED는 정산서 승인이 트리거하는 시스템 전이다 (spec 5.4).
+        # 사용자가 직접 부를 수 있는 경로를 열어두지 않는다.
+        raise ForbiddenError(
+            "SYSTEM_TRANSITION_ONLY", "시스템만 수행할 수 있는 전이입니다"
+        )
 ```
+
+이 모듈의 import 블록에 두 줄을 더한다:
+
+```python
+from enum import StrEnum
+
+from app.services.trip_status import ALLOWED_TRANSITIONS, assert_trip_transition
+```
+
+`trip_status.py`는 손대지 않는다 — 적법성만 묻는 호출부를 위해 그대로 남긴다.
+
+전이 검사 테스트는 다음을 덮는다.
+
+- `TRANSITION_ACTOR` 항목을 지우면 **import 시점에** `RuntimeError`가 난다 (임시로 지워 확인 후 복원)
+- 여섯 전이 각각이 올바른 주체는 통과시키고 반대 주체는 거부한다 (신청자가 approve → `NOT_TRIP_APPROVER`, 결재자가 complete → `NOT_TRIP_OWNER`)
+- `COMPLETED → SETTLED`는 신청자·결재자 모두 `SYSTEM_TRANSITION_ONLY`로 막는다
+- 불법 전이는 호출자가 다른 전이의 올바른 주체라도 `TRIP_INVALID_TRANSITION`(409)이다
 
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_trip_rules.py -v`
-Expected: 26 passed
+Expected: 27 passed
 
 - [ ] **Step 5: 커밋**
 
@@ -1784,7 +1882,7 @@ from app.errors import ForbiddenError, NotFoundError
 from app.models import CostCenter, Trip, User
 from app.schemas.common import Page
 from app.schemas.trip import TripDetail, TripListItem
-from app.services.trip_rules import can_view
+from app.services.trip_rules import can_view_trip
 
 
 @dataclass(frozen=True)
@@ -1859,7 +1957,7 @@ async def build_detail(session: AsyncSession, trip: Trip) -> TripDetail:
 async def load_visible_trip(session: AsyncSession, trip_id: int, user: User) -> Trip:
     """볼 수 없는 출장은 없는 것으로 취급한다 (spec 7: 타인 리소스 접근도 404)."""
     trip = await session.get(Trip, trip_id)
-    if trip is None or not can_view(
+    if trip is None or not can_view_trip(
         user_id=user.id, role=user.role, owner_id=trip.user_id, approver_id=trip.approver_id
     ):
         raise NotFoundError("TRIP_NOT_FOUND", "출장을 찾을 수 없습니다")
@@ -2191,8 +2289,8 @@ from app.services.trip_rules import (
     assert_deletable,
     assert_editable,
     assert_estimated_cost,
-    assert_owner,
-    can_view,
+    assert_trip_owner,
+    can_view_trip,
 )
 ```
 
@@ -2214,7 +2312,7 @@ async def _validate_writable_fields(session: AsyncSession, values: dict) -> None
         session, [(group, field_name, values[field_name]) for group, field_name in _CODE_FIELDS]
     )
     await assert_cost_center(session, values["cost_center_code"])
-    assert_date_range(values["start_date"], values["end_date"])
+    assert_date_range(start_date=values["start_date"], end_date=values["end_date"])
     assert_estimated_cost(values["estimated_cost"])
 
 
@@ -2247,7 +2345,7 @@ async def update_trip(
     session: AsyncSession, *, user: User, trip_id: int, payload: TripUpdate
 ) -> TripDetail:
     trip = await load_visible_trip(session, trip_id, user)
-    assert_owner(user_id=user.id, owner_id=trip.user_id)
+    assert_trip_owner(user_id=user.id, owner_id=trip.user_id)
     assert_editable(trip.status)
 
     changes = payload.model_dump(exclude_unset=True)
@@ -2288,7 +2386,7 @@ async def update_trip(
 
 async def delete_trip(session: AsyncSession, *, user: User, trip_id: int) -> None:
     trip = await load_visible_trip(session, trip_id, user)
-    assert_owner(user_id=user.id, owner_id=trip.user_id)
+    assert_trip_owner(user_id=user.id, owner_id=trip.user_id)
     assert_deletable(trip.status)
     # activity_log.entity_id에는 FK가 없으므로 함께 지울 것이 없다. 삭제된 출장의
     # 이력이 남지만, 임시저장만 삭제 가능하므로 남는 이력은 CREATED/UPDATED뿐이다.
@@ -2612,13 +2710,14 @@ from app.services.trip_rules import (
     assert_editable,
     assert_estimated_cost,
     assert_has_approver,
-    assert_owner,
     assert_reject_reason,
-    assert_trip_approver,
-    can_view,
+    assert_transition_allowed,
+    assert_trip_owner,
+    can_view_trip,
 )
-from app.services.trip_status import assert_trip_transition
 ```
+
+`assert_trip_transition`·`assert_trip_approver`를 직접 import하지 않는다. 전이 검사는 전부 `assert_transition_allowed` 하나를 지나야 하며, 두 검사를 따로 부를 수 있게 열어두면 언젠가 한쪽만 부른다.
 
 파일 끝에 추가:
 
@@ -2627,13 +2726,27 @@ def _link(trip: Trip) -> str:
     return f"/trips/{trip.id}"
 
 
+def _assert_transition(trip: Trip, user: User, target: TripStatus) -> None:
+    """전이 검사는 이 한 줄만 부른다.
+
+    적법성과 수행 주체를 따로 부르던 때는 한쪽을 빠뜨려도 조용했고, 그 실패는
+    fail-open이었다 — 출장을 볼 수 있는 결재자가 신청자 전용 전이를 통과했다.
+    """
+    assert_transition_allowed(
+        trip.status,
+        target,
+        user_id=user.id,
+        owner_id=trip.user_id,
+        approver_id=trip.approver_id,
+    )
+
+
 async def submit_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDetail:
     trip = await load_visible_trip(session, trip_id, user)
-    assert_owner(user_id=user.id, owner_id=trip.user_id)
-    assert_trip_transition(trip.status, TripStatus.SUBMITTED)
+    _assert_transition(trip, user, TripStatus.SUBMITTED)
     # 모델에 CheckConstraint가 없으므로 상신 시점에 한 번 더 본다. DB를 직접 고친
     # 데이터가 결재로 흘러가는 것을 막는 마지막 지점이다.
-    assert_date_range(trip.start_date, trip.end_date)
+    assert_date_range(start_date=trip.start_date, end_date=trip.end_date)
     approver_id = assert_has_approver(user.manager_id)
 
     from_status = trip.status
@@ -2666,8 +2779,7 @@ async def submit_trip(session: AsyncSession, *, user: User, trip_id: int) -> Tri
 
 async def approve_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDetail:
     trip = await load_visible_trip(session, trip_id, user)
-    assert_trip_approver(user_id=user.id, approver_id=trip.approver_id)
-    assert_trip_transition(trip.status, TripStatus.APPROVED)
+    _assert_transition(trip, user, TripStatus.APPROVED)
 
     from_status = trip.status
     trip.status = TripStatus.APPROVED
@@ -2698,8 +2810,7 @@ async def reject_trip(
     session: AsyncSession, *, user: User, trip_id: int, payload: RejectRequest
 ) -> TripDetail:
     trip = await load_visible_trip(session, trip_id, user)
-    assert_trip_approver(user_id=user.id, approver_id=trip.approver_id)
-    assert_trip_transition(trip.status, TripStatus.REJECTED)
+    _assert_transition(trip, user, TripStatus.REJECTED)
     reason = assert_reject_reason(payload.reason)
 
     from_status = trip.status
@@ -2735,8 +2846,7 @@ async def reopen_trip(session: AsyncSession, *, user: User, trip_id: int) -> Tri
     없으면 반려된 출장은 영원히 반려 상태로 남는다.
     """
     trip = await load_visible_trip(session, trip_id, user)
-    assert_owner(user_id=user.id, owner_id=trip.user_id)
-    assert_trip_transition(trip.status, TripStatus.DRAFT)
+    _assert_transition(trip, user, TripStatus.DRAFT)
 
     from_status = trip.status
     trip.status = TripStatus.DRAFT
@@ -2763,8 +2873,7 @@ async def reopen_trip(session: AsyncSession, *, user: User, trip_id: int) -> Tri
 
 async def complete_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDetail:
     trip = await load_visible_trip(session, trip_id, user)
-    assert_owner(user_id=user.id, owner_id=trip.user_id)
-    assert_trip_transition(trip.status, TripStatus.COMPLETED)
+    _assert_transition(trip, user, TripStatus.COMPLETED)
     assert_completable(trip.end_date, today=date.today())
 
     from_status = trip.status
