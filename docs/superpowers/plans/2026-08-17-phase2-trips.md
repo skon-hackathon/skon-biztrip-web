@@ -439,6 +439,45 @@ async def test_validate_codes_raises_for_unknown_group(db_session):
             [("TRANSPORT", "transport_code", "AIR"), ("NOPE", "nope_code", "X")],
         )
 
+    error = exc_info.value
+    assert error.code == "UNKNOWN_CODE_GROUP"
+    # 그룹 부재도 어느 입력 필드 탓인지 가리켜야 한다. field가 없으면 코드 필드
+    # 다섯 개 중 어디를 고쳐야 하는지 알 수 없는 400이 된다.
+    assert error.field == "nope_code"
+
+
+async def test_validate_codes_rejects_inactive_group(db_session):
+    await make_code_group(db_session, "RETIRED", ["AIR"], is_active=False)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await validate_codes(db_session, [("RETIRED", "transport_code", "AIR")])
+
+    error = exc_info.value
+    assert error.code == "UNKNOWN_CODE_GROUP"
+    assert error.field == "transport_code"
+
+
+async def test_validate_codes_rejects_inactive_code_value(db_session):
+    group = await make_code_group(db_session, "TRANSPORT", ["AIR"])
+    db_session.add(Code(group_id=group.id, code="SHIP", name="선박", sort_order=2, is_active=False))
+    await db_session.flush()
+
+    with pytest.raises(ValidationError) as exc_info:
+        await validate_codes(db_session, [("TRANSPORT", "transport_code", "SHIP")])
+
+    assert exc_info.value.code == "INVALID_CODE"
+
+
+async def test_validate_codes_reports_missing_group_before_bad_value(db_session):
+    """설정 오류(그룹 부재)를 사용자 오타(값 오류)보다 먼저 보고한다."""
+    await make_code_group(db_session, "TRANSPORT", ["AIR"])
+
+    with pytest.raises(ValidationError) as exc_info:
+        await validate_codes(
+            db_session,
+            [("TRANSPORT", "transport_code", "ROCKET"), ("NOPE", "nope_code", "X")],
+        )
+
     assert exc_info.value.code == "UNKNOWN_CODE_GROUP"
 
 
@@ -496,7 +535,6 @@ Expected: FAIL — `ImportError: cannot import name 'validate_codes'`
 `backend/app/services/codes.py` 상단 import를 다음으로 교체:
 
 ```python
-from collections import defaultdict
 from collections.abc import Sequence
 
 from sqlalchemy import select
@@ -522,9 +560,13 @@ async def validate_codes(session: AsyncSession, specs: Sequence[CodeSpec]) -> No
     같은 세션에 execute를 병렬로 걸면 InvalidRequestError가 난다. 대신 그룹 수와
     무관하게 쿼리 2개로 끝낸다.
 
-    실패는 specs 순서대로 보고한다. 어떤 필드가 먼저 걸리는지가 결정적이어야
-    호출부와 테스트가 흔들리지 않는다.
+    보고 순서는 두 단계다. 코드그룹 부재(설정 오류)를 값 오류(사용자 오타)보다 먼저
+    보고하고, 각 단계 안에서는 specs 순서를 따른다. 어떤 필드가 먼저 걸리는지가
+    결정적이어야 호출부와 테스트가 흔들리지 않는다.
     """
+    if not specs:
+        return
+
     wanted = {group_code for group_code, _, _ in specs}
     group_rows = await session.execute(
         select(CodeGroup.id, CodeGroup.group_code).where(
@@ -533,10 +575,15 @@ async def validate_codes(session: AsyncSession, specs: Sequence[CodeSpec]) -> No
     )
     group_id_by_code = {group_code: group_id for group_id, group_code in group_rows}
 
-    for group_code, _, _ in specs:
+    # field를 실어 보낸다. load_active_codes는 필드를 모르지만 여기는 알고 있고,
+    # 그게 없으면 "그룹이 비활성" 오류가 코드 필드 다섯 개 중 어디를 가리키는지
+    # 알 수 없는 400이 된다.
+    for group_code, field, _ in specs:
         if group_code not in group_id_by_code:
             raise ValidationError(
-                "UNKNOWN_CODE_GROUP", f"존재하지 않는 코드그룹입니다: {group_code}"
+                "UNKNOWN_CODE_GROUP",
+                f"존재하지 않는 코드그룹입니다: {group_code}",
+                field=field,
             )
 
     code_rows = await session.execute(
@@ -544,20 +591,25 @@ async def validate_codes(session: AsyncSession, specs: Sequence[CodeSpec]) -> No
             Code.group_id.in_(group_id_by_code.values()), Code.is_active.is_(True)
         )
     )
-    allowed: dict[int, set[str]] = defaultdict(set)
+    allowed: dict[int, set[str]] = {}
     for group_id, code in code_rows:
-        allowed[group_id].add(code)
+        allowed.setdefault(group_id, set()).add(code)
 
     for group_code, field, value in specs:
         assert_valid_code(
-            group_code, value, allowed[group_id_by_code[group_code]], field=field
+            group_code,
+            value,
+            allowed.get(group_id_by_code[group_code], set()),
+            field=field,
         )
 ```
 
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_codes_service.py -v`
-Expected: 12 passed
+Expected: 15 passed
+
+**두 `is_active` 필터가 진짜 걸리는지 확인할 것.** `CodeGroup.is_active.is_(True)`와 `Code.is_active.is_(True)`를 각각 지웠을 때 새 테스트가 실패해야 한다. 실패하지 않으면 그 테스트는 아무것도 지키지 않는 것이다 — 이 함수의 존재 이유가 "비활성화된 코드값이 저장되는 것을 막는 것"이므로 이 확인을 건너뛰지 말 것.
 
 - [ ] **Step 5: 커밋**
 
@@ -6338,6 +6390,13 @@ git commit --allow-empty -m "chore: verify phase 2 end to end"
 - [ ] spec 5.4의 전이 6종(상신·승인·반려·재작성·완료, 그리고 각각의 위반 시 409)이 웹과 curl 양쪽에서 동일하게 동작
 
 ---
+
+## Phase 2 안에서 처리할 정리 항목
+
+Task 2 리뷰에서 나온 것. **Task 9(출장 생성·수정)가 통과한 뒤에** 손댄다 — 첫 소비자가 자리를 잡기 전에 건드리면 흔들린다.
+
+- **`load_active_codes`의 생산 호출부가 사라졌다.** Task 2 이후 이 함수를 부르는 것은 테스트뿐이고, Phase 2의 나머지 태스크 중 어느 것도 쓰지 않는다(Task 13의 `load_code_groups`는 별도 경로다). 그런데 "그룹 부재 vs 활성 코드 0개" 규칙과 두 개의 `is_active` 필터가 이제 두 벌의 쿼리 구현에 각각 들어 있어, 의미를 바꾸려면 두 곳을 다 찾아야 한다. Task 9 통과 후 둘 중 하나를 택한다 — (a) `load_active_codes`와 딸린 테스트 3건을 지우거나, (b) 두 함수를 `_load_active_codes_by_group(session, group_codes) -> dict[str, set[str]]` 하나 위에 얹는다.
+- **그때 `load_active_codes`의 주석도 고친다.** "join은 두 경우를 구분하지 못한다"고 적혀 있으나 이는 **inner** join에만 참이다. LEFT OUTER JOIN은 구분할 수 있다(그룹 없음 → 행 없음, 코드 0개 → `(group, NULL)`). 지금 구조를 바꿀 이유는 없지만 — 근거는 성능이 아니라 호출부 안전이다 — 저 문장은 언젠가 누군가를 오도하거나 잘못된 수정을 부른다.
 
 ## Phase 3으로 넘기는 항목
 
