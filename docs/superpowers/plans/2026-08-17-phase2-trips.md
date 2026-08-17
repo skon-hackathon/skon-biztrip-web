@@ -1639,7 +1639,7 @@ class RejectRequest(BaseModel):
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_schemas_trip.py -v`
-Expected: 5 passed
+Expected: 7 passed
 
 - [ ] **Step 5: 커밋**
 
@@ -3651,7 +3651,7 @@ app.include_router(codes.router)
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_codes_api.py -v`
-Expected: 5 passed
+Expected: 7 passed
 
 - [ ] **Step 5: 커밋**
 
@@ -4039,7 +4039,7 @@ app.include_router(notifications.router)
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_notifications_api.py -v`
-Expected: 5 passed
+Expected: 7 passed
 
 - [ ] **Step 5: 백엔드 전체 확인**
 
