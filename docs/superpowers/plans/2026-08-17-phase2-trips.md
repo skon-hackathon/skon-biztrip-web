@@ -675,11 +675,28 @@ async def test_assert_cost_center_rejects_inactive_code(db_session):
     assert error.field == "cost_center_code"
 
 
+async def test_assert_cost_center_rejects_unknown_code(db_session):
+    """Agent가 없는 코드를 지어내는 경우 — 실제로 가장 흔한 실패다."""
+    await make_cost_center(db_session, "CC9001")
+
+    with pytest.raises(ValidationError) as exc_info:
+        await assert_cost_center(db_session, "CC9999")
+
+    assert exc_info.value.code == "INVALID_COST_CENTER"
+
+
 async def test_assert_cost_center_rejects_none(db_session):
     with pytest.raises(ValidationError) as exc_info:
         await assert_cost_center(db_session, None)
 
     assert exc_info.value.code == "INVALID_COST_CENTER"
+
+
+async def test_assert_cost_center_reports_a_custom_field(db_session):
+    with pytest.raises(ValidationError) as exc_info:
+        await assert_cost_center(db_session, "CC9999", field="items.0.cost_center_code")
+
+    assert exc_info.value.field == "items.0.cost_center_code"
 ```
 
 - [ ] **Step 2: 실패 확인**
@@ -708,6 +725,11 @@ CenterModel = type[FundCenter] | type[CostCenter]
 
 
 async def load_active_center_codes(session: AsyncSession, model: CenterModel) -> set[str]:
+    """활성 센터 코드 집합.
+
+    model을 인자로 받는 이유는 Phase 3의 fund center 쓰기 경로가 같은 쿼리를 그대로
+    쓰기 때문이다. Phase 2에서 실제로 넘어오는 값은 CostCenter 하나뿐이다.
+    """
     rows = await session.execute(select(model.code).where(model.is_active.is_(True)))
     return set(rows.scalars().all())
 
@@ -715,17 +737,24 @@ async def load_active_center_codes(session: AsyncSession, model: CenterModel) ->
 async def assert_cost_center(
     session: AsyncSession, code: str | None, *, field: str = "cost_center_code"
 ) -> None:
+    """값 하나를 검사하는데 집합 전체를 읽는 이유는 **테이블이 작아서**다 (시드 기준
+    코스트센터 10건·펀드센터 6건). `validate_codes`와의 일관성 때문이 아니다 — 그쪽은
+    한 쿼리를 다섯 필드에 분산시키는 이득이 있지만 여기엔 없다. `CostCenter.code`는
+    unique·index라 값 하나면 존재 확인 쿼리가 자연스럽다. 큰 마스터 테이블에
+    이 모양을 복사하지 말 것.
+    """
     allowed = await load_active_center_codes(session, CostCenter)
     if code not in allowed:
+        # "존재하지 않는"이라고 쓰지 않는다 — 비활성 코드는 존재하기 때문이다.
         raise ValidationError(
-            "INVALID_COST_CENTER", f"존재하지 않는 코스트센터입니다: {code}", field=field
+            "INVALID_COST_CENTER", f"사용할 수 없는 코스트센터입니다: {code}", field=field
         )
 ```
 
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_centers_service.py -v`
-Expected: 5 passed
+Expected: 7 passed
 
 - [ ] **Step 5: 커밋**
 
@@ -3528,6 +3557,7 @@ git commit -m "feat: add common code lookup endpoints"
 
 **Files:**
 - Create: `backend/app/schemas/center.py`
+- Modify: `backend/app/services/centers.py`
 - Create: `backend/app/routers/centers.py`
 - Modify: `backend/app/main.py`
 - Test: `backend/tests/test_centers_api.py`
@@ -3599,36 +3629,47 @@ class CenterOut(BaseModel):
     department_id: int | None
 ```
 
-`backend/app/routers/centers.py`:
+먼저 `backend/app/services/centers.py`에 조회 함수를 추가한다. **라우터에 쿼리를 두지 않는다** — `is_active` 필터가 서비스와 라우터 두 곳에 생기면 나중에 한쪽만 고치게 된다.
 
 ```python
-from fastapi import APIRouter
-from sqlalchemy import select
-
-from app.deps import CurrentUser, DbSession
-from app.models import CostCenter, FundCenter
-from app.schemas.center import CenterOut
-
-router = APIRouter(prefix="/api/v1", tags=["centers"])
-
-
-async def _list_centers(session: DbSession, model: type[FundCenter] | type[CostCenter]):
+async def load_active_centers(session: AsyncSession, model: CenterModel) -> list[CenterOut]:
+    """활성 센터를 코드 순으로 돌려준다. Task 3의 load_active_center_codes와 달리
+    이름·부서까지 필요해서 엔티티를 읽는다 — 화면 드롭다운이 코드만으로는 못 쓴다."""
     rows = (
-        (await session.execute(select(model).where(model.is_active.is_(True)).order_by(model.code)))
+        (
+            await session.execute(
+                select(model).where(model.is_active.is_(True)).order_by(model.code)
+            )
+        )
         .scalars()
         .all()
     )
     return [CenterOut.model_validate(row) for row in rows]
+```
+
+`app/services/centers.py` 상단 import에 `from app.schemas.center import CenterOut`를 더한다.
+
+`backend/app/routers/centers.py`:
+
+```python
+from fastapi import APIRouter
+
+from app.deps import CurrentUser, DbSession
+from app.models import CostCenter, FundCenter
+from app.schemas.center import CenterOut
+from app.services.centers import load_active_centers
+
+router = APIRouter(prefix="/api/v1", tags=["centers"])
 
 
 @router.get("/fund-centers", response_model=list[CenterOut])
 async def list_fund_centers(user: CurrentUser, session: DbSession) -> list[CenterOut]:
-    return await _list_centers(session, FundCenter)
+    return await load_active_centers(session, FundCenter)
 
 
 @router.get("/cost-centers", response_model=list[CenterOut])
 async def list_cost_centers(user: CurrentUser, session: DbSession) -> list[CenterOut]:
-    return await _list_centers(session, CostCenter)
+    return await load_active_centers(session, CostCenter)
 ```
 
 `backend/app/main.py`:
@@ -6402,7 +6443,7 @@ Task 2 리뷰에서 나온 것. **Task 9(출장 생성·수정)가 통과한 뒤
 
 - **`COMPLETED → SETTLED` 전이.** `trip_status.py`에 전이는 이미 열려 있지만 트리거(정산서 APPROVED)가 Phase 3에 있어 아무도 호출하지 않는다. Phase 3의 정산 승인 서비스가 `record_transition`을 통해 함께 기록해야 한다 — 출장 쪽 이력이 비면 타임라인이 끊긴다.
 - **`GET /fund-centers`는 만들어만 뒀다.** Phase 2에서 화면이 쓰지 않는다. 정산서 헤더의 FC 셀렉트가 첫 사용처다.
-- **`assert_fund_center` 검증기가 없다.** `services/centers.py`에 `load_active_center_codes`만 있고 코스트센터 검증만 있다. 정산서 쓰기 경로를 만들 때 같은 모양으로 추가한다.
+- **`assert_fund_center` 검증기가 없다.** `services/centers.py`에 `load_active_center_codes`만 있고 코스트센터 검증만 있다. 정산서 쓰기 경로를 만들 때 같은 모양으로 추가한다. **그때 순수 함수를 뽑는다** — `assert_cost_center`는 쿼리·멤버십 검사·예외 발생이 한 함수에 붙어 있어서 두 줄짜리 순수 검사에 `db_session`이 필요하다. 지금은 4줄이라 그대로 두지만, `assert_fund_center`가 `if code not in allowed: raise` 블록을 복사하려는 순간이 `assert_center_code(code, allowed, *, field)`를 뽑을 시점이다 (`codes.py`가 `assert_valid_code`를 분리해 둔 것과 같은 모양).
 - **`ActivityAction`에 정산 액션이 없다.** 현재 enum은 출장 기준이다. 정산서 전이도 같은 `activity_log`를 쓰되 `entity_type=EXPENSE_REPORT`로 구분한다 — 새 액션 멤버가 필요한지 Phase 3에서 판단한다.
 - **알림 뱃지는 라우트 변경 시에만 갱신된다.** 같은 화면에 머무는 동안 새 알림이 오면 보이지 않는다. 폴링이나 SSE는 데모 범위 밖이라 하지 않았다.
 - **대시보드는 집계를 위해 목록 API를 4번 부른다.** `size=1`이라 비용은 작지만, 카드가 더 늘면 전용 요약 엔드포인트가 낫다.
