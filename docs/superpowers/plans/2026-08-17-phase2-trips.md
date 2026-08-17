@@ -1120,7 +1120,7 @@ from app.services.trip_status import ALLOWED_TRANSITIONS, assert_trip_transition
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_trip_rules.py -v`
-Expected: 27 passed
+Expected: 45 passed (전이 주체 테이블 테스트 포함)
 
 - [ ] **Step 5: 커밋**
 
