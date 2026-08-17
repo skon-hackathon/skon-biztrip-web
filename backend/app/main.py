@@ -6,7 +6,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.errors import register_error_handlers
-from app.routers import auth
+from app.routers import auth, trips
 
 
 @asynccontextmanager
@@ -29,6 +29,7 @@ app = FastAPI(
 )
 register_error_handlers(app)
 app.include_router(auth.router)
+app.include_router(trips.router)
 
 
 @app.get("/api/v1/health")

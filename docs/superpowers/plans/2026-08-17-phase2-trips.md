@@ -3213,7 +3213,7 @@ app.include_router(trips.router)
 - [ ] **Step 5: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_trips_api.py -v`
-Expected: 12 passed
+Expected: 15 passed
 
 - [ ] **Step 6: 커밋**
 
