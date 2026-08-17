@@ -2,8 +2,8 @@ import pytest
 from sqlalchemy import event
 
 from app.errors import ValidationError
-from app.models import Code, CodeGroup
-from app.services.codes import assert_valid_code, load_active_codes, validate_codes
+from app.models import Code
+from app.services.codes import assert_valid_code, validate_codes
 from tests.factories import make_code_group
 
 
@@ -27,39 +27,6 @@ def test_assert_valid_code_rejects_none():
         assert_valid_code("TRANSPORT", None, {"AIR"}, field="transport_code")
 
     assert exc_info.value.code == "INVALID_CODE"
-
-
-async def test_load_active_codes_returns_only_active(db_session):
-    group = CodeGroup(group_code="TRANSPORT", name="이동수단")
-    db_session.add(group)
-    await db_session.flush()
-    db_session.add(Code(group_id=group.id, code="AIR", name="항공", sort_order=1))
-    db_session.add(Code(group_id=group.id, code="SHIP", name="선박", sort_order=2, is_active=False))
-    await db_session.flush()
-
-    values = await load_active_codes(db_session, "TRANSPORT")
-
-    assert values == {"AIR"}
-
-
-async def test_load_active_codes_raises_for_unknown_group(db_session):
-    with pytest.raises(ValidationError) as exc_info:
-        await load_active_codes(db_session, "NOPE")
-
-    assert exc_info.value.code == "UNKNOWN_CODE_GROUP"
-
-
-async def test_load_active_codes_raises_for_inactive_group(db_session):
-    group = CodeGroup(group_code="RETIRED", name="폐지된 그룹", is_active=False)
-    db_session.add(group)
-    await db_session.flush()
-    db_session.add(Code(group_id=group.id, code="AIR", name="항공", sort_order=1))
-    await db_session.flush()
-
-    with pytest.raises(ValidationError) as exc_info:
-        await load_active_codes(db_session, "RETIRED")
-
-    assert exc_info.value.code == "UNKNOWN_CODE_GROUP"
 
 
 async def test_validate_codes_accepts_all_valid_values(db_session):
@@ -166,12 +133,18 @@ async def test_validate_codes_reports_group_failures_before_value_failures(db_se
 
 
 async def test_validate_codes_treats_group_with_no_active_codes_as_invalid_value(db_session):
+    """그룹은 존재하지만 활성 코드가 0개면 UNKNOWN_CODE_GROUP이 아니라 INVALID_CODE다.
+
+    두 경우를 구분하는 것이 이 프로젝트의 규칙이다 — 설정 오류(그룹 없음)와 사용자
+    오타(값 오류)는 Agent가 다르게 대응해야 한다.
+    """
     await make_code_group(db_session, "EMPTY_GROUP", [])
 
     with pytest.raises(ValidationError) as exc_info:
         await validate_codes(db_session, [("EMPTY_GROUP", "some_code", "X")])
 
     assert exc_info.value.code == "INVALID_CODE"
+    assert exc_info.value.field == "some_code"
 
 
 async def test_validate_codes_issues_two_queries_regardless_of_group_count(db_session):
