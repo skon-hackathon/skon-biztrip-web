@@ -8,7 +8,6 @@ import app.services.trip_rules as trip_rules_module
 from app.enums import TripStatus, UserRole
 from app.errors import ConflictError, ForbiddenError, ValidationError
 from app.services.trip_rules import (
-    EDITABLE_STATUSES,
     MAX_ESTIMATED_COST,
     assert_completable,
     assert_date_range,
@@ -115,7 +114,9 @@ def test_editable_statuses(status):
     assert_editable(status)
 
 
-@pytest.mark.parametrize("status", sorted(set(TripStatus) - EDITABLE_STATUSES))
+@pytest.mark.parametrize(
+    "status", sorted(set(TripStatus) - {TripStatus.DRAFT, TripStatus.REJECTED})
+)
 def test_non_editable_statuses(status):
     with pytest.raises(ConflictError) as exc_info:
         assert_editable(status)
@@ -183,7 +184,7 @@ def test_transition_actor_guard_fires_on_missing_entry():
     assert target_line in source, "TRANSITION_ACTOR 엔트리 텍스트가 바뀌어 이 테스트를 갱신해야 합니다"
     broken_source = source.replace(target_line, "", 1)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="TRANSITION_ACTOR"):
         exec(  # noqa: S102 - 의도된 동적 실행: 임포트 시점 가드를 재현하기 위함
             compile(broken_source, str(module_path), "exec"),
             {"__name__": "trip_rules_broken_for_test"},
