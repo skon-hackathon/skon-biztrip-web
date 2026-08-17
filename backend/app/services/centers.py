@@ -15,10 +15,8 @@ CenterModel = type[FundCenter] | type[CostCenter]
 
 
 async def load_active_center_codes(session: AsyncSession, model: CenterModel) -> set[str]:
-    """`model`을 파라미터로 받는 이유: Phase 2에서는 `assert_cost_center`가 항상
-    `CostCenter`만 넘기는 유일한 프로덕션 호출부다. `FundCenter` 인자는 지금은 테스트
-    에서만 쓰인다 — Phase 3의 전표 정산 쓰기 경로가 `assert_fund_center`를 추가할 때
-    똑같은 조회가 필요해서 미리 모델 파라미터로 열어둔 것이다.
+    """`model`을 파라미터로 받는 이유: `assert_cost_center`·`assert_fund_center` 양쪽이
+    쓴다 — 둘 다 똑같은 조회를 필요로 해서 모델 파라미터로 열어둔 것이다.
 
     활성 코드 전체를 집합으로 읽어오는 것도 이 테이블이 작기 때문에 괜찮다 (seed 기준
     cost_center 10개, fund_center 6개). `validate_codes`가 집합을 쓰는 이유(필드 여러
@@ -31,14 +29,28 @@ async def load_active_center_codes(session: AsyncSession, model: CenterModel) ->
     return set(rows.scalars().all())
 
 
+def assert_center_code(code: str | None, allowed: set[str], *, code_name: str, field: str) -> None:
+    """순수 검증 — DB 접근 없음. 허용 집합은 호출자가 주입한다.
+
+    `assert_fund_center`가 `assert_cost_center`의 `if code not in allowed: raise` 블록을
+    복사하려는 순간에 뽑았다. 두 벌이 되면 한쪽만 고치는 날이 온다.
+    """
+    if code not in allowed:
+        raise ValidationError(code_name, f"사용할 수 없는 센터입니다: {code}", field=field)
+
+
 async def assert_cost_center(
     session: AsyncSession, code: str | None, *, field: str = "cost_center_code"
 ) -> None:
     allowed = await load_active_center_codes(session, CostCenter)
-    if code not in allowed:
-        raise ValidationError(
-            "INVALID_COST_CENTER", f"사용할 수 없는 코스트센터입니다: {code}", field=field
-        )
+    assert_center_code(code, allowed, code_name="INVALID_COST_CENTER", field=field)
+
+
+async def assert_fund_center(
+    session: AsyncSession, code: str | None, *, field: str = "fund_center_code"
+) -> None:
+    allowed = await load_active_center_codes(session, FundCenter)
+    assert_center_code(code, allowed, code_name="INVALID_FUND_CENTER", field=field)
 
 
 async def load_active_centers(session: AsyncSession, model: CenterModel) -> list[CenterOut]:
