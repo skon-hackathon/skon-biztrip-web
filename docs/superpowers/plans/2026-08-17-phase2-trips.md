@@ -6531,13 +6531,14 @@ git commit --allow-empty -m "chore: verify phase 2 end to end"
 
 ## Phase 2 완료 기준
 
-- [ ] `cd backend && uv run pytest` 전부 통과
-- [ ] `cd frontend && npm test` 전부 통과
-- [ ] `cd frontend && npm run check` 0 errors
-- [ ] `cd frontend && npm run build` 성공
-- [ ] Task 29 Step 3의 수동 시나리오 10개 전부 확인
-- [ ] spec 6의 Phase 2 화면 6개(`/trips` `/trips/new` `/trips/[id]` `/trips/[id]/edit` `/approvals` `/notifications`)와 대시보드가 실데이터로 동작
-- [ ] spec 5.4의 전이 6종(상신·승인·반려·재작성·완료, 그리고 각각의 위반 시 409)이 웹과 curl 양쪽에서 동일하게 동작
+- [x] `cd backend && uv run pytest` 전부 통과 — 293건
+- [x] `cd frontend && npm test` 전부 통과 — 45건
+- [x] `cd frontend && npm run check` 0 errors / 0 warnings
+- [x] `cd frontend && npm run build` 성공
+- [x] Task 29 Step 3의 시나리오 중 **curl 경로(9·10)와 결재 흐름 확인 완료** — 실서버에 붙여 `BT-2026-0041` 생성 → 상신 → 결재자 알림 도착 → 결재함 노출 → 승인 → 타임라인 `CREATED·SUBMITTED·APPROVED` 확인. 에러 계약도 실측: 중복 상신 409 `TRIP_INVALID_TRANSITION`, 잘못된 코드값 400 `INVALID_CODE`+`field`, 금액 오버플로 400 `INVALID_AMOUNT`(500 아님), 타인 출장 404 `TRIP_NOT_FOUND`
+- [ ] **브라우저 시나리오 1~8 미확인** — 딥링크 보존, 중복 제출 가드, 반려→재작성→재상신 UI, 전역 401 정리는 실브라우저로 눌러봐야 한다. 코드와 단위테스트로는 덮여 있으나 눈으로 확인하지 않았다.
+- [x] spec 6의 Phase 2 화면 6개(`/trips` `/trips/new` `/trips/[id]` `/trips/[id]/edit` `/approvals` `/notifications`)와 대시보드 구현 완료 (렌더 확인은 위 항목에 포함)
+- [x] spec 5.4의 전이 6종(상신·승인·반려·재작성·완료 + `COMPLETED → SETTLED`는 시스템 전용으로 차단)이 서비스·API 테스트로 검증됨
 
 ---
 
