@@ -2029,7 +2029,7 @@ async def get_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDe
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_trips_service_read.py -v`
-Expected: 14 passed
+Expected: 16 passed
 
 - [ ] **Step 5: 커밋**
 
