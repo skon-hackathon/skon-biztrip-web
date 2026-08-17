@@ -4,7 +4,10 @@ SK온 사내 출장시스템을 모사한 데모 웹. 실제 회계·전표 처�
 
 - 설계: `docs/superpowers/specs/2026-08-12-skon-biztrip-web-design.md`
 - 구현 계획: `docs/superpowers/plans/` — Phase별로 하나씩. **작업 전 해당 Phase plan을 읽을 것.**
+- Phase 현황·이월 항목: `docs/phase-status.md` — **새 Phase를 시작하기 전에 읽을 것.**
 - 디자인 규칙: `DESIGN.md`
+
+Phase 1(기반)·Phase 2(출장) 완료. 다음은 Phase 3(정산).
 
 ## 명령어
 
@@ -19,9 +22,9 @@ cd backend && uv run python -m app.cli init-db    # 스키마 + 없는 테이블
 cd backend && uv run python -m app.cli seed       # 데모 데이터 (멱등)
 
 # 테스트
-cd backend  && uv run pytest          # 116건
-cd frontend && npm test               # 8건
-cd frontend && npm run check          # 타입체크, 0 errors 유지
+cd backend  && uv run pytest          # 293건
+cd frontend && npm test               # 45건
+cd frontend && npm run check          # 타입체크, 0 errors / 0 warnings 유지
 
 # 배포 (3서비스 — DB는 스택 밖)
 docker compose -p skon-prod up -d --build   # http://localhost
@@ -53,7 +56,13 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **에러는 단일 계약을 지킨다.** 모든 에러 응답이 `{"error": {"code", "message", "field"}}`다. `code`는 기계가 읽는 도메인 코드이며, 특히 409 상태전이 충돌에서 Agent가 재시도 여부를 판단하는 근거다. 새 예외는 `app/errors.py`의 `AppError` 계열로 만든다.
 
-**ORM에 `relationship()`을 붙이지 않는다.** 의도치 않은 eager loading을 세 번 되돌린 이력이 있다. 이름 등이 필요하면 명시적 조인이나 `id.in_(...)` 일괄 조회를 쓴다. 목록 응답에서 행마다 헬퍼를 호출하면 N+1이 된다.
+**ORM에 `relationship()`을 붙이지 않는다.** 의도치 않은 eager loading을 세 번 되돌린 이력이 있다. 이름 등이 필요하면 명시적 조인이나 `id.in_(...)` 일괄 조회를 쓴다. 목록 응답에서 행마다 헬퍼를 호출하면 N+1이 된다. `services/trips.py`의 `build_list_items`가 그 패턴이고, 쿼리 수를 고정하는 테스트가 붙어 있다.
+
+**상태 전이는 `assert_transition_allowed` 하나만 통과한다.** 적법성(`trip_status.py`)과 수행 주체(`trip_rules.py`의 `TRANSITION_ACTOR`)를 따로 부를 수 있게 열어두면 언젠가 한쪽만 부르고, 그 실패는 **fail-open**이다 — 출장을 볼 수 있는 결재자가 신청자 전용 전이를 통과한다. `services/trips.py`가 `assert_trip_transition`·`assert_trip_approver`를 직접 import하지 않는 것은 그래서다. 새 전이를 추가하면 `TRANSITION_ACTOR`에도 넣어야 하며, 빠뜨리면 import 시점에 `RuntimeError`로 죽는다.
+
+**금액은 컬럼 상한까지 서비스가 막는다.** `Numeric(14, 2)`를 넘는 값을 통과시키면 flush에서 Postgres numeric overflow가 나고 catch-all 핸들러에 걸려 **500**이 된다. Agent는 5xx를 재시도하므로 절대 성공할 수 없는 요청에 재시도 루프가 걸린다. `trip_rules.MAX_ESTIMATED_COST`가 그 방어선이다.
+
+**`AsyncSession`을 `asyncio.gather`로 병렬 사용하지 않는다.** 같은 세션에 `execute`를 병렬로 걸면 `InvalidRequestError`가 난다. 여러 조회를 묶어야 하면 `IN` 절로 쿼리 수를 줄인다 (`services/codes.py`의 `validate_codes`가 그 예 — 그룹 수와 무관하게 쿼리 2개).
 
 **`text-body` 클래스를 쓰지 않는다.** `--color-body` 때문에 Tailwind가 이걸 **색상** 유틸리티로 생성한다. 본문 타이포는 `text-body-md` / `text-body-sm`으로 명시한다. 에러가 나지 않고 조용히 틀린다.
 
@@ -61,11 +70,18 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **새 폼에는 중복 제출 가드를 넣는다.** 버튼의 `disabled`만으로는 `form.requestSubmit()` 경로를 막지 못한다. `handleSubmit` 첫 줄에 `if (submitting) return;`. 출장 신청·정산 제출은 멱등하지 않아 중복 POST가 곧 중복 레코드다.
 
+**`$props.id()`는 컴포넌트당 한 번만 호출할 수 있다.** 입력이 여러 개인 컴포넌트는 베이스 id 하나를 받아 접미사를 붙인다 (`FilterBar.svelte` 참고). 두 번 부르면 컴파일 에러다.
+
+**인증이 필요한 프론트 호출은 전부 `authRequest`를 쓴다.** raw `request`는 미인증 호출(`login`)과 토큰을 명시적으로 넘기는 곳(`restore`)뿐이다. `{ token: auth.token }`를 손으로 붙이면 하나만 빠뜨려도 조용히 미인증 요청이 나가고, 그 401은 진짜 인증 실패와 구분되지 않는다. `authRequest`가 401에서 세션을 정리하고 `auth.onUnauthorized`를 호출한다 — 이 콜백은 `+layout.svelte`가 주입한다. 스토어가 `$app/navigation`을 직접 import하면 vitest가 모듈을 못 불러온다.
+
 ## 테스트
 
 - `db_session` 픽스처는 각 테스트를 외부 트랜잭션 + savepoint로 감싸 롤백한다. `conftest.py`에서 **루프 스코프·`join_transaction_mode="create_savepoint"`·테스트 스키마 가드는 건드리지 말 것** — 셋 다 리뷰를 거쳐 고정된 값이고, 각각 이벤트루프 불일치·테스트 간 데이터 누수·운영 스키마 삭제를 막는다.
+- 객체 생성은 `tests/factories.py`를 쓴다. `seeded`(데모 시드 적재)와 `login_as(email)`(Authorization 헤더) 픽스처도 `conftest.py`에 있다.
 - 순수 함수(코드 검증, 상태전이, 자동매칭)는 DB 없이 단위테스트한다.
-- 프론트 테스트는 `client.ts`와 `auth.svelte.ts`만 다룬다. jsdom을 추가하지 말고 `vi.stubGlobal`을 쓴다.
+- 프론트 테스트는 순수 모듈(`client.ts`·`auth.svelte.ts`·`nav.ts`·`format.ts`·`trips.ts`)만 다룬다. jsdom을 추가하지 말고 `vi.stubGlobal`을 쓴다.
+- **가드를 추가하면 mutation으로 확인한다.** 그 줄을 지웠을 때 테스트가 실패하지 않으면 그 테스트는 아무것도 지키지 않는 것이다. Phase 2에서 이 방식으로 세 개의 구멍을 찾았다 — 삭제 가능 상태, 금액 상한, 전이 주체. 파일을 고친 뒤 반드시 `grep`으로 편집이 실제로 반영됐는지 확인할 것: `backend/`에서 맨 `python3`는 pyenv 때문에 죽고, heredoc 안에서는 그 실패가 조용하다.
+- **파생 테스트 데이터가 검사 대상 상수에서 나오면 안 된다.** `sorted(set(TripStatus) - EDITABLE_STATUSES)`처럼 쓰면 상수를 넓히는 버그와 테스트가 함께 움직여 통과한다. 리터럴에서 파생시킬 것.
 
 ## 마이그레이션
 
@@ -73,7 +89,12 @@ Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 
 
 ## 다음 Phase로 넘어간 항목
 
-`docs/superpowers/plans/2026-08-12-phase1-foundation.md` 말미의 "이월" 절들에 Phase 2에서 반드시 처리할 것들이 정리돼 있다. 특히 `authRequest` 래퍼와 전역 401 처리는 **첫 인증 화면을 만들 때 함께** 해야 한다.
+`docs/phase-status.md`의 "Phase 2에서 넘어온 항목" 절을 **Phase 3 착수 전에** 읽을 것. 요약하면:
+
+- `load_active_codes`가 생산 호출부를 잃었고 `is_active` 규칙이 두 벌로 존재한다. 정리하거나 공용 헬퍼로 합친다.
+- `assert_fund_center`를 만들 때 `assert_center_code` 순수 함수를 함께 뽑는다.
+- `COMPLETED → SETTLED`는 `TRANSITION_ACTOR`에 `SYSTEM`으로 등록돼 있고 현재 모든 직접 호출이 `SYSTEM_TRANSITION_ONLY`로 막힌다. 정산서 승인이 이걸 어떻게 통과시킬지 먼저 정할 것.
+- 브라우저 수동 시나리오 8개가 미확인이다 (Phase 2 plan Task 29 Step 3).
 
 ## 환경 주의
 
