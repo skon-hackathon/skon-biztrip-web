@@ -97,11 +97,14 @@ Phase 2는 통합 테스트가 많고, `Trip`·`User`는 NOT NULL 컬럼이 많�
 
 Trip·User는 NOT NULL 컬럼이 많아 테스트마다 손으로 채우면 금세 어긋난다.
 trip_no는 BT-9999-* 를 쓴다 — 채번 테스트(현재 연도)와 절대 겹치지 않게 하기 위해서다.
+생성된 email·employee_no·trip_no 값 자체를 단언하지 말 것 — `_counter`는 세션 동안
+초기화되지 않아 `-k`·`--lf`·단일 파일 실행에 따라 값이 달라진다.
 """
 
 from datetime import date, timedelta
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import TripStatus, UserRole
@@ -130,14 +133,21 @@ async def make_user(
     manager: User | None = None,
     name: str = "박출장",
 ) -> User:
-    department = department or await make_department(session)
+    # app/seed.py의 _seed_users와 같은 순서: 명시적 department > manager의 department > 새로 생성.
+    # 그래야 팩토리로 만든 조직도 seed와 같은 모양(매니저와 보고자가 같은 부서)이 된다.
+    if department is not None:
+        department_id = department.id
+    elif manager is not None:
+        department_id = manager.department_id
+    else:
+        department_id = (await make_department(session)).id
     n = _next()
     user = User(
         email=f"factory{n}@skon.example",
         password_hash="x",
         name=name,
         employee_no=f"E9{n:03d}",
-        department_id=department.id,
+        department_id=department_id,
         position_code="STAFF",
         role=role,
         manager_id=manager.id if manager else None,
@@ -210,13 +220,38 @@ async def make_trip_master_data(session: AsyncSession) -> None:
     """make_trip이 쓰는 코드값과 코스트센터를 실제로 존재하게 만든다.
 
     서비스 레이어 검증을 타는 테스트에서만 필요하다 (모델 레벨 테스트는 코드값을
-    검증하지 않으므로 없어도 통과한다)."""
-    await make_code_group(session, "TRIP_PURPOSE", ["AUDIT", "CUSTOMER"])
-    await make_code_group(session, "DESTINATION_TYPE", ["DOMESTIC", "OVERSEAS"])
-    await make_code_group(session, "COUNTRY", ["KR", "US"])
-    await make_code_group(session, "TRANSPORT", ["RAIL", "AIR"])
-    await make_code_group(session, "ACCOMMODATION", ["HOTEL", "DORM"])
-    await make_cost_center(session, "CC2030")
+    검증하지 않으므로 없어도 통과한다). app/seed.py가 만드는 것과 group_code·code가
+    겹치므로 `seeded` 세션에서 불러도 안전하도록 이미 있는 것은 건너뛴다.
+
+    멱등하지 않으면 `seeded`에서 UniqueViolation이 나는데, 그 IntegrityError는
+    savepoint 안에서 터져 세션을 오염시키므로 이후 모든 문장이 PendingRollbackError로
+    바뀌고 원인이 묻힌다."""
+    groups = {
+        "TRIP_PURPOSE": ["AUDIT", "CUSTOMER"],
+        "DESTINATION_TYPE": ["DOMESTIC", "OVERSEAS"],
+        "COUNTRY": ["KR", "US"],
+        "TRANSPORT": ["RAIL", "AIR"],
+        "ACCOMMODATION": ["HOTEL", "DORM"],
+    }
+    existing_groups = set(
+        (
+            await session.execute(
+                select(CodeGroup.group_code).where(CodeGroup.group_code.in_(groups))
+            )
+        ).scalars()
+    )
+    for group_code, codes in groups.items():
+        if group_code not in existing_groups:
+            await make_code_group(session, group_code, codes)
+
+    cost_center_code = "CC2030"
+    existing_center = (
+        await session.execute(
+            select(CostCenter.code).where(CostCenter.code == cost_center_code)
+        )
+    ).scalar_one_or_none()
+    if existing_center is None:
+        await make_cost_center(session, cost_center_code)
 ```
 
 - [ ] **Step 2: conftest 픽스처 추가**
@@ -233,7 +268,7 @@ async def seeded(db_session) -> AsyncSession:
 
 
 @pytest.fixture
-def login_as(client):
+def login_as(client: httpx.AsyncClient) -> Callable[[str], Awaitable[dict[str, str]]]:
     """이메일로 로그인해 Authorization 헤더를 만든다. seeded와 함께 쓴다."""
 
     async def _login(email: str) -> dict[str, str]:
@@ -246,11 +281,15 @@ def login_as(client):
     return _login
 ```
 
-같은 파일 상단 import 블록에 다음 두 줄을 더한다:
+같은 파일 상단 import 블록에 다음을 더한다:
 
 ```python
+from collections.abc import Awaitable, Callable
+
 from app.seed import DEFAULT_PASSWORD, seed_all
 ```
+
+(`AsyncGenerator`를 이미 `collections.abc`에서 가져오고 있으므로 그 줄에 합쳐도 된다.)
 
 - [ ] **Step 3: 팩토리 테스트 작성**
 
@@ -290,6 +329,28 @@ async def test_make_user_ids_are_unique(db_session):
 
     assert first.email != second.email
     assert first.employee_no != second.employee_no
+
+
+async def test_make_trip_master_data_is_safe_on_seeded_session(seeded):
+    """seed_all이 이미 만든 코드그룹·코스트센터와 겹쳐도 UniqueViolation 없이 통과해야 한다."""
+    await make_trip_master_data(seeded)
+
+
+async def test_make_user_with_manager_inherits_manager_department(db_session):
+    manager = await make_user(db_session)
+
+    report = await make_user(db_session, manager=manager)
+
+    assert report.department_id == manager.department_id
+```
+
+이 파일 상단 import는 다음과 같다:
+
+```python
+from datetime import date
+
+from app.enums import TripStatus, UserRole
+from tests.factories import make_trip, make_trip_master_data, make_user
 ```
 
 - [ ] **Step 4: 테스트 실행**
