@@ -6,28 +6,44 @@ eager loading을 이미 세 번 되돌린 이력이 있다. 목록에서 행마�
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import ActivityAction, EntityType, TripStatus, UserRole
+from app.enums import ActivityAction, EntityType, NotificationType, TripStatus, UserRole
 from app.errors import ForbiddenError, NotFoundError
-from app.models import CostCenter, Trip, User
+from app.models import ActivityLog, CostCenter, Trip, User
 from app.schemas.common import Page
-from app.schemas.trip import TripCreate, TripDetail, TripListItem, TripUpdate
+from app.schemas.trip import (
+    RejectRequest,
+    TimelineEntry,
+    TripCreate,
+    TripDetail,
+    TripListItem,
+    TripUpdate,
+)
 from app.services.centers import assert_cost_center
 from app.services.codes import validate_codes
-from app.services.history import record_transition
+from app.services.history import NotifySpec, record_transition
 from app.services.numbering import next_trip_no
 from app.services.trip_rules import (
+    assert_completable,
     assert_date_range,
     assert_deletable,
     assert_editable,
     assert_estimated_cost,
+    assert_has_approver,
+    assert_reject_reason,
+    assert_transition_allowed,
     assert_trip_owner,
     can_view_trip,
 )
+
+# assert_trip_transition·assert_trip_approver를 직접 import하지 않는다. 전이 검사는 전부
+# assert_transition_allowed 하나를 지나야 하며, 두 검사를 따로 부를 수 있게 열어두면
+# 언젠가 한쪽만 부르고 그 실패는 조용하다 — 출장을 볼 수 있는 결재자가 신청자 전용
+# 전이를 통과하게 된다.
 
 
 @dataclass(frozen=True)
@@ -263,3 +279,208 @@ async def delete_trip(session: AsyncSession, *, user: User, trip_id: int) -> Non
     # 이력이 남지만, 임시저장만 삭제 가능하므로 남는 이력은 CREATED/UPDATED뿐이다.
     await session.delete(trip)
     await session.commit()
+
+
+def _link(trip: Trip) -> str:
+    return f"/trips/{trip.id}"
+
+
+def _assert_transition(trip: Trip, user: User, target: TripStatus) -> None:
+    """전이 검사는 이 한 줄만 부른다.
+
+    적법성과 수행 주체를 따로 부르던 때는 한쪽을 빠뜨려도 조용했고, 그 실패는
+    fail-open이었다 — 출장을 볼 수 있는 결재자가 신청자 전용 전이를 통과했다.
+    owner_id·approver_id 추출도 여기 한 곳에서만 하므로 잘못된 id를 넘길 자리가 없다.
+    """
+    assert_transition_allowed(
+        trip.status,
+        target,
+        user_id=user.id,
+        owner_id=trip.user_id,
+        approver_id=trip.approver_id,
+    )
+
+
+async def submit_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDetail:
+    trip = await load_visible_trip(session, trip_id, user)
+    _assert_transition(trip, user, TripStatus.SUBMITTED)
+    # 모델에 CheckConstraint가 없으므로 상신 시점에 한 번 더 본다. DB를 직접 고친
+    # 데이터가 결재로 흘러가는 것을 막는 마지막 지점이다.
+    assert_date_range(start_date=trip.start_date, end_date=trip.end_date)
+    approver_id = assert_has_approver(user.manager_id)
+
+    from_status = trip.status
+    trip.status = TripStatus.SUBMITTED
+    trip.approver_id = approver_id
+    trip.submitted_at = datetime.now(timezone.utc)
+    trip.approved_at = None
+    trip.reject_reason = None
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.TRIP,
+        entity_id=trip.id,
+        actor_id=user.id,
+        action=ActivityAction.SUBMITTED,
+        from_status=from_status.value,
+        to_status=TripStatus.SUBMITTED.value,
+        notify=NotifySpec(
+            user_id=approver_id,
+            type=NotificationType.TRIP_SUBMITTED,
+            title="출장 결재 요청",
+            body=f"{user.name}님이 '{trip.title}' 출장을 상신했습니다.",
+            link_url=_link(trip),
+        ),
+    )
+    await session.commit()
+    return await build_detail(session, trip)
+
+
+async def approve_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDetail:
+    trip = await load_visible_trip(session, trip_id, user)
+    _assert_transition(trip, user, TripStatus.APPROVED)
+
+    from_status = trip.status
+    trip.status = TripStatus.APPROVED
+    trip.approved_at = datetime.now(timezone.utc)
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.TRIP,
+        entity_id=trip.id,
+        actor_id=user.id,
+        action=ActivityAction.APPROVED,
+        from_status=from_status.value,
+        to_status=TripStatus.APPROVED.value,
+        notify=NotifySpec(
+            user_id=trip.user_id,
+            type=NotificationType.TRIP_APPROVED,
+            title="출장이 승인되었습니다",
+            body=f"'{trip.title}' 출장이 {user.name}님에게 승인되었습니다.",
+            link_url=_link(trip),
+        ),
+    )
+    await session.commit()
+    return await build_detail(session, trip)
+
+
+async def reject_trip(
+    session: AsyncSession, *, user: User, trip_id: int, payload: RejectRequest
+) -> TripDetail:
+    trip = await load_visible_trip(session, trip_id, user)
+    _assert_transition(trip, user, TripStatus.REJECTED)
+    reason = assert_reject_reason(payload.reason)
+
+    from_status = trip.status
+    trip.status = TripStatus.REJECTED
+    trip.reject_reason = reason
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.TRIP,
+        entity_id=trip.id,
+        actor_id=user.id,
+        action=ActivityAction.REJECTED,
+        from_status=from_status.value,
+        to_status=TripStatus.REJECTED.value,
+        memo=reason,
+        notify=NotifySpec(
+            user_id=trip.user_id,
+            type=NotificationType.TRIP_REJECTED,
+            title="출장이 반려되었습니다",
+            body=f"'{trip.title}' 출장이 반려되었습니다. 사유: {reason}",
+            link_url=_link(trip),
+        ),
+    )
+    await session.commit()
+    return await build_detail(session, trip)
+
+
+async def reopen_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDetail:
+    """반려된 출장을 임시저장으로 되돌려 재상신할 수 있게 한다 (spec 5.4의 REJECTED → DRAFT).
+
+    spec 7의 엔드포인트 목록에는 없지만 spec 5.4의 상태도가 요구하는 전이다. 이것이
+    없으면 반려된 출장은 영원히 반려 상태로 남는다.
+    """
+    trip = await load_visible_trip(session, trip_id, user)
+    _assert_transition(trip, user, TripStatus.DRAFT)
+
+    from_status = trip.status
+    trip.status = TripStatus.DRAFT
+    trip.approver_id = None
+    trip.submitted_at = None
+    trip.approved_at = None
+    # reject_reason은 남긴다 — 무엇을 고쳐야 하는지 화면에서 계속 보여야 한다.
+    # 다음 상신에서 submit_trip이 지운다.
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.TRIP,
+        entity_id=trip.id,
+        actor_id=user.id,
+        action=ActivityAction.UPDATED,
+        from_status=from_status.value,
+        to_status=TripStatus.DRAFT.value,
+        memo="재작성을 위해 임시저장으로 되돌림",
+    )
+    await session.commit()
+    return await build_detail(session, trip)
+
+
+async def complete_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDetail:
+    trip = await load_visible_trip(session, trip_id, user)
+    _assert_transition(trip, user, TripStatus.COMPLETED)
+    assert_completable(trip.end_date, today=date.today())
+
+    from_status = trip.status
+    trip.status = TripStatus.COMPLETED
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.TRIP,
+        entity_id=trip.id,
+        actor_id=user.id,
+        action=ActivityAction.COMPLETED,
+        from_status=from_status.value,
+        to_status=TripStatus.COMPLETED.value,
+        memo="출장 완료 처리",
+    )
+    await session.commit()
+    return await build_detail(session, trip)
+
+
+async def list_timeline(session: AsyncSession, *, user: User, trip_id: int) -> list[TimelineEntry]:
+    trip = await load_visible_trip(session, trip_id, user)
+    rows = (
+        (
+            await session.execute(
+                select(ActivityLog)
+                .where(
+                    ActivityLog.entity_type == EntityType.TRIP,
+                    ActivityLog.entity_id == trip.id,
+                )
+                .order_by(ActivityLog.created_at, ActivityLog.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    names = await _names_by_id(session, {row.actor_id for row in rows})
+    return [
+        TimelineEntry(
+            id=row.id,
+            action=row.action,
+            from_status=row.from_status,
+            to_status=row.to_status,
+            memo=row.memo,
+            actor_id=row.actor_id,
+            actor_name=names.get(row.actor_id, ""),
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]

@@ -2931,7 +2931,7 @@ async def list_timeline(
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_trips_service_transitions.py -v`
-Expected: 16 passed
+Expected: 19 passed
 
 - [ ] **Step 5: 전체 백엔드 테스트 확인**
 
