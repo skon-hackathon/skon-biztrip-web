@@ -1,4 +1,3 @@
-from collections import defaultdict
 from collections.abc import Sequence
 
 from sqlalchemy import select
@@ -56,9 +55,14 @@ async def validate_codes(session: AsyncSession, specs: Sequence[CodeSpec]) -> No
     같은 세션에 execute를 병렬로 걸면 InvalidRequestError가 난다. 대신 그룹 수와
     무관하게 쿼리 2개로 끝낸다.
 
-    실패는 specs 순서대로 보고한다. 어떤 필드가 먼저 걸리는지가 결정적이어야
-    호출부와 테스트가 흔들리지 않는다.
+    보고 순서는 단일 정렬이 아니라 두 단계다: 그룹 존재 여부(UNKNOWN_CODE_GROUP)를
+    specs 순서대로 전부 확인한 뒤에야 코드값(INVALID_CODE)을 specs 순서대로 확인한다.
+    설정 오류(존재하지 않는 그룹)가 사용자 오타보다 항상 먼저 보고된다는 뜻이다.
+    각 단계 안에서는 specs 순서가 그대로 유지된다.
     """
+    if not specs:
+        return
+
     wanted = {group_code for group_code, _, _ in specs}
     group_rows = await session.execute(
         select(CodeGroup.id, CodeGroup.group_code).where(
@@ -67,10 +71,12 @@ async def validate_codes(session: AsyncSession, specs: Sequence[CodeSpec]) -> No
     )
     group_id_by_code = {group_code: group_id for group_id, group_code in group_rows}
 
-    for group_code, _, _ in specs:
+    for group_code, field, _ in specs:
         if group_code not in group_id_by_code:
             raise ValidationError(
-                "UNKNOWN_CODE_GROUP", f"존재하지 않는 코드그룹입니다: {group_code}"
+                "UNKNOWN_CODE_GROUP",
+                f"존재하지 않는 코드그룹입니다: {group_code}",
+                field=field,
             )
 
     code_rows = await session.execute(
@@ -78,11 +84,14 @@ async def validate_codes(session: AsyncSession, specs: Sequence[CodeSpec]) -> No
             Code.group_id.in_(group_id_by_code.values()), Code.is_active.is_(True)
         )
     )
-    allowed: dict[int, set[str]] = defaultdict(set)
+    allowed: dict[int, set[str]] = {}
     for group_id, code in code_rows:
-        allowed[group_id].add(code)
+        allowed.setdefault(group_id, set()).add(code)
 
     for group_code, field, value in specs:
         assert_valid_code(
-            group_code, value, allowed[group_id_by_code[group_code]], field=field
+            group_code,
+            value,
+            allowed.get(group_id_by_code[group_code], set()),
+            field=field,
         )

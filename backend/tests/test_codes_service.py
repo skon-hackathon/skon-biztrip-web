@@ -119,7 +119,50 @@ async def test_validate_codes_raises_for_unknown_group(db_session):
             [("TRANSPORT", "transport_code", "AIR"), ("NOPE", "nope_code", "X")],
         )
 
-    assert exc_info.value.code == "UNKNOWN_CODE_GROUP"
+    error = exc_info.value
+    assert error.code == "UNKNOWN_CODE_GROUP"
+    assert error.field == "nope_code"
+
+
+async def test_validate_codes_raises_for_inactive_group(db_session):
+    await make_code_group(db_session, "RETIRED", ["AIR"], is_active=False)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await validate_codes(db_session, [("RETIRED", "transport_code", "AIR")])
+
+    error = exc_info.value
+    assert error.code == "UNKNOWN_CODE_GROUP"
+    assert error.field == "transport_code"
+
+
+async def test_validate_codes_rejects_inactive_code_value(db_session):
+    group = await make_code_group(db_session, "TRANSPORT", ["AIR"])
+    db_session.add(Code(group_id=group.id, code="SHIP", name="선박", sort_order=2, is_active=False))
+    await db_session.flush()
+
+    with pytest.raises(ValidationError) as exc_info:
+        await validate_codes(db_session, [("TRANSPORT", "transport_code", "SHIP")])
+
+    error = exc_info.value
+    assert error.code == "INVALID_CODE"
+    assert error.field == "transport_code"
+
+
+async def test_validate_codes_reports_group_failures_before_value_failures(db_session):
+    await make_code_group(db_session, "TRANSPORT", ["AIR"])
+
+    with pytest.raises(ValidationError) as exc_info:
+        await validate_codes(
+            db_session,
+            [
+                ("TRANSPORT", "transport_code", "ROCKET"),
+                ("NOPE", "nope_code", "X"),
+            ],
+        )
+
+    error = exc_info.value
+    assert error.code == "UNKNOWN_CODE_GROUP"
+    assert error.field == "nope_code"
 
 
 async def test_validate_codes_treats_group_with_no_active_codes_as_invalid_value(db_session):
