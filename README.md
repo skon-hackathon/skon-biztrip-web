@@ -6,17 +6,48 @@ SK온 사내 출장시스템을 모사한 데모 웹 애플리케이션. 출장 
 
 - 설계: [`docs/superpowers/specs/2026-08-12-skon-biztrip-web-design.md`](docs/superpowers/specs/2026-08-12-skon-biztrip-web-design.md)
 - 구현 계획: [`docs/superpowers/plans/`](docs/superpowers/plans/)
+- Phase 현황·이월 항목: [`docs/phase-status.md`](docs/phase-status.md)
 - 디자인 규칙: [`DESIGN.md`](DESIGN.md)
 
-## 현재 상태 — Phase 1 (기반) 완료
+## 현재 상태 — Phase 2 (출장) 완료
 
 | 영역 | 내용 |
 |---|---|
-| 백엔드 | FastAPI, 14테이블 스키마, JWT 인증, 수동 시드 CLI, 테스트 116건 |
-| 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰 적용, 로그인·라우트가드·대시보드, 테스트 8건 |
+| 백엔드 | FastAPI, 14테이블 스키마, JWT 인증, 출장 CRUD·상태전이·타임라인·알림 API, 공통코드/센터 조회, 수동 시드 CLI, 테스트 **293건** |
+| 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰 적용, 로그인·라우트가드, 출장 신청/목록/상세/수정, 결재함, 알림, 대시보드, 테스트 **45건** |
 | 배포 | Dockerfile 2종, nginx ingress, 3서비스 compose |
 
-출장 목록·정산·개발자 화면은 Phase 2 이후에 추가된다. 상단 내비의 해당 탭은 현재 404다.
+**동작하는 흐름**: 출장 신청 → 상신 → 결재자 알림 → 결재함 → 승인/반려 → (반려 시) 재작성 → 재상신 → 완료 처리. 모든 전이가 타임라인에 남는다.
+
+정산(`/expenses`)·개발자(`/developers`) 화면은 Phase 3·4에서 추가된다. 상단 내비의 해당 탭은 현재 404다.
+
+### 웹 UI와 Agent가 같은 엔드포인트를 쓴다
+
+화면에서 하는 일을 curl로 그대로 할 수 있다.
+
+```bash
+TOKEN=$(curl -s localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"user1@skon.example","password":"skon1234!"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')
+
+# 유효한 코드값을 스스로 발견한다
+curl -s localhost:8000/api/v1/codes/TRANSPORT -H "Authorization: Bearer $TOKEN"
+
+# 출장을 만들고 상신한다
+curl -s -X POST localhost:8000/api/v1/trips -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"울산공장 품질점검","purpose_code":"AUDIT","purpose_detail":"라인 3 확인",
+       "destination_type_code":"DOMESTIC","country_code":"KR","city":"울산",
+       "start_date":"2026-10-01","end_date":"2026-10-03","transport_code":"RAIL",
+       "accommodation_code":"HOTEL","cost_center_code":"CC2030","estimated_cost":"300000"}'
+
+curl -s -X POST localhost:8000/api/v1/trips/41/submit -H "Authorization: Bearer $TOKEN"
+```
+
+에러는 항상 같은 모양이다. `code`는 기계가 읽는 도메인 코드이며, 409에서 Agent가 재시도 여부를 판단하는 근거다.
+
+```json
+{"error": {"code": "TRIP_INVALID_TRANSITION", "message": "SUBMITTED 상태에서 SUBMITTED 로 변경할 수 없습니다", "field": null}}
+```
 
 ## 데이터베이스
 
@@ -83,9 +114,9 @@ cd frontend && npm run dev
 ## 테스트
 
 ```bash
-cd backend  && uv run pytest          # 116건
-cd frontend && npm test               # 8건
-cd frontend && npm run check          # 타입체크 (0 errors)
+cd backend  && uv run pytest          # 293건
+cd frontend && npm test               # 45건
+cd frontend && npm run check          # 타입체크 (0 errors / 0 warnings)
 ```
 
 백엔드 테스트는 같은 DB 서버의 **별도 스키마**(`TEST_DB_SCHEMA`, 기본 `skon_test`)에서 돈다. 매 실행마다 그 스키마를 `drop_all` 후 재생성하므로 **`DB_SCHEMA`와 절대 같으면 안 된다.** 같으면 픽스처가 실행 자체를 거부한다.
