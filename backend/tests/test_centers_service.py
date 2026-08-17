@@ -40,8 +40,26 @@ async def test_assert_cost_center_rejects_inactive_code(db_session):
     assert error.field == "cost_center_code"
 
 
+async def test_assert_cost_center_rejects_unknown_code(db_session):
+    await make_cost_center(db_session, "CC9001")
+
+    with pytest.raises(ValidationError) as exc_info:
+        await assert_cost_center(db_session, "CC9999")
+
+    error = exc_info.value
+    assert error.code == "INVALID_COST_CENTER"
+    assert error.field == "cost_center_code"
+
+
 async def test_assert_cost_center_rejects_none(db_session):
     with pytest.raises(ValidationError) as exc_info:
         await assert_cost_center(db_session, None)
 
     assert exc_info.value.code == "INVALID_COST_CENTER"
+
+
+async def test_assert_cost_center_reports_custom_field(db_session):
+    with pytest.raises(ValidationError) as exc_info:
+        await assert_cost_center(db_session, "CC9999", field="trip.cost_center_code")
+
+    assert exc_info.value.field == "trip.cost_center_code"
