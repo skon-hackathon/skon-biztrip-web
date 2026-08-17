@@ -2397,7 +2397,7 @@ async def delete_trip(session: AsyncSession, *, user: User, trip_id: int) -> Non
 - [ ] **Step 4: 통과 확인**
 
 Run: `cd backend && uv run pytest tests/test_trips_service_write.py -v`
-Expected: 15 passed
+Expected: 17 passed
 
 - [ ] **Step 5: 커밋**
 

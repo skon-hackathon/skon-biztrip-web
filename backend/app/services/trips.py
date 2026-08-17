@@ -11,12 +11,23 @@ from datetime import date
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import TripStatus, UserRole
+from app.enums import ActivityAction, EntityType, TripStatus, UserRole
 from app.errors import ForbiddenError, NotFoundError
 from app.models import CostCenter, Trip, User
 from app.schemas.common import Page
-from app.schemas.trip import TripDetail, TripListItem
-from app.services.trip_rules import can_view_trip
+from app.schemas.trip import TripCreate, TripDetail, TripListItem, TripUpdate
+from app.services.centers import assert_cost_center
+from app.services.codes import validate_codes
+from app.services.history import record_transition
+from app.services.numbering import next_trip_no
+from app.services.trip_rules import (
+    assert_date_range,
+    assert_deletable,
+    assert_editable,
+    assert_estimated_cost,
+    assert_trip_owner,
+    can_view_trip,
+)
 
 
 @dataclass(frozen=True)
@@ -158,3 +169,97 @@ async def list_trips(
 
 async def get_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDetail:
     return await build_detail(session, await load_visible_trip(session, trip_id, user))
+
+
+#: 코드값 검증이 필요한 필드. (group_code, 필드명) 짝을 여기 한 곳에서만 관리한다.
+#: 손으로 다섯 쌍을 나열하지 않기 때문에 그룹과 field를 잘못 짝지을 수 없다.
+_CODE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("TRIP_PURPOSE", "purpose_code"),
+    ("DESTINATION_TYPE", "destination_type_code"),
+    ("COUNTRY", "country_code"),
+    ("TRANSPORT", "transport_code"),
+    ("ACCOMMODATION", "accommodation_code"),
+)
+
+#: 생성·수정 양쪽에서 검증해야 하는 필드. 수정은 부분 갱신이므로 병합 결과를 넘긴다.
+_VALIDATED_FIELDS: tuple[str, ...] = (
+    *(field_name for _, field_name in _CODE_FIELDS),
+    "cost_center_code",
+    "start_date",
+    "end_date",
+    "estimated_cost",
+)
+
+
+async def _validate_writable_fields(session: AsyncSession, values: dict) -> None:
+    await validate_codes(
+        session, [(group, field_name, values[field_name]) for group, field_name in _CODE_FIELDS]
+    )
+    await assert_cost_center(session, values["cost_center_code"])
+    assert_date_range(start_date=values["start_date"], end_date=values["end_date"])
+    assert_estimated_cost(values["estimated_cost"])
+
+
+async def create_trip(session: AsyncSession, *, user: User, payload: TripCreate) -> TripDetail:
+    values = payload.model_dump()
+    await _validate_writable_fields(session, values)
+
+    trip = Trip(
+        **values,
+        trip_no=await next_trip_no(session, date.today()),
+        user_id=user.id,
+        status=TripStatus.DRAFT,
+    )
+    session.add(trip)
+    await session.flush()
+    await record_transition(
+        session,
+        entity_type=EntityType.TRIP,
+        entity_id=trip.id,
+        actor_id=user.id,
+        action=ActivityAction.CREATED,
+        to_status=TripStatus.DRAFT.value,
+        memo="출장 신청서 작성",
+    )
+    await session.commit()
+    return await build_detail(session, trip)
+
+
+async def update_trip(
+    session: AsyncSession, *, user: User, trip_id: int, payload: TripUpdate
+) -> TripDetail:
+    trip = await load_visible_trip(session, trip_id, user)
+    assert_trip_owner(user_id=user.id, owner_id=trip.user_id)
+    assert_editable(trip.status)
+
+    changes = payload.model_dump(exclude_unset=True)
+    # 보낸 필드만이 아니라 **병합 결과**를 검증한다. end_date만 바꿔도 start_date와의
+    # 관계가 깨질 수 있고, destination_type만 바꿔도 country와 어긋날 수 있다.
+    merged = {name: changes.get(name, getattr(trip, name)) for name in _VALIDATED_FIELDS}
+    await _validate_writable_fields(session, merged)
+
+    for name, value in changes.items():
+        setattr(trip, name, value)
+    await session.flush()
+    await record_transition(
+        session,
+        entity_type=EntityType.TRIP,
+        entity_id=trip.id,
+        actor_id=user.id,
+        action=ActivityAction.UPDATED,
+        from_status=trip.status.value,
+        to_status=trip.status.value,
+        memo="출장 정보 수정",
+    )
+    await session.commit()
+    return await build_detail(session, trip)
+
+
+async def delete_trip(session: AsyncSession, *, user: User, trip_id: int) -> None:
+    trip = await load_visible_trip(session, trip_id, user)
+    assert_trip_owner(user_id=user.id, owner_id=trip.user_id)
+    assert_deletable(trip.status)
+    # activity_log.entity_id에는 FK가 없으므로 함께 지울 것이 없다. 삭제된 출장의
+    # 이력이 남지만, 임시저장만 삭제 가능하므로 남는 이력은 CREATED/UPDATED뿐이다.
+    await session.delete(trip)
+    await session.commit()
