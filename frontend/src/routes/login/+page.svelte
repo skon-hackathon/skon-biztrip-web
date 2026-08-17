@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { ApiError } from '$lib/api/client';
+	import { safeRedirect } from '$lib/nav';
 	import Button from '$lib/components/Button.svelte';
 	import TextInput from '$lib/components/TextInput.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
@@ -17,7 +19,7 @@
 		submitting = true;
 		try {
 			await auth.login(email, password);
-			await goto('/');
+			await goto(safeRedirect(page.url.searchParams.get('redirect')));
 		} catch (error) {
 			errorMessage =
 				error instanceof ApiError ? error.message : '로그인 중 문제가 발생했습니다';

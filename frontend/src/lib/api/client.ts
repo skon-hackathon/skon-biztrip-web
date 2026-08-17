@@ -10,7 +10,7 @@ export class ApiError extends Error {
 	}
 }
 
-interface RequestOptions {
+export interface RequestOptions {
 	method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
 	body?: unknown;
 	token?: string | null;

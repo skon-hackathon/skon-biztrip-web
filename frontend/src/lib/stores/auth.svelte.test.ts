@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { auth } from './auth.svelte';
+import { auth, authRequest } from './auth.svelte';
 
 const TOKEN_KEY = 'skon.token';
 
@@ -35,5 +35,88 @@ describe('auth.restore', () => {
 		expect(auth.token).toBeNull();
 		expect(auth.user).toBeNull();
 		expect(storage.removeItem).toHaveBeenCalledWith(TOKEN_KEY);
+	});
+});
+
+function jsonResponse(body: unknown, status: number): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { 'Content-Type': 'application/json' }
+	});
+}
+
+describe('authRequest', () => {
+	afterEach(() => {
+		auth.token = null;
+		auth.user = null;
+		auth.onUnauthorized = null;
+		vi.unstubAllGlobals();
+	});
+
+	it('sends the stored token without the caller passing it', async () => {
+		vi.stubGlobal('localStorage', createLocalStorageStub());
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }, 200));
+		auth.token = 'live-token';
+
+		await authRequest('/api/v1/trips', { fetchImpl: fetchMock });
+
+		const [, init] = fetchMock.mock.calls[0];
+		expect(init.headers.Authorization).toBe('Bearer live-token');
+	});
+
+	it('clears the session and calls onUnauthorized on 401', async () => {
+		const storage = createLocalStorageStub({ [TOKEN_KEY]: 'expired' });
+		vi.stubGlobal('localStorage', storage);
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(
+				jsonResponse({ error: { code: 'TOKEN_EXPIRED', message: '만료' } }, 401)
+			);
+		const onUnauthorized = vi.fn();
+		auth.token = 'expired';
+		auth.user = { id: 1 } as never;
+		auth.onUnauthorized = onUnauthorized;
+
+		await expect(authRequest('/api/v1/trips', { fetchImpl: fetchMock })).rejects.toMatchObject({
+			status: 401
+		});
+
+		expect(auth.token).toBeNull();
+		expect(auth.user).toBeNull();
+		expect(storage.removeItem).toHaveBeenCalledWith(TOKEN_KEY);
+		expect(onUnauthorized).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves the session alone for non-401 failures', async () => {
+		vi.stubGlobal('localStorage', createLocalStorageStub());
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(
+				jsonResponse({ error: { code: 'TRIP_NOT_FOUND', message: '없음' } }, 404)
+			);
+		const onUnauthorized = vi.fn();
+		auth.token = 'live-token';
+		auth.onUnauthorized = onUnauthorized;
+
+		await expect(authRequest('/api/v1/trips/1', { fetchImpl: fetchMock })).rejects.toMatchObject({
+			status: 404
+		});
+
+		expect(auth.token).toBe('live-token');
+		expect(onUnauthorized).not.toHaveBeenCalled();
+	});
+
+	it('survives a missing onUnauthorized callback', async () => {
+		vi.stubGlobal('localStorage', createLocalStorageStub());
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(jsonResponse({ error: { code: 'TOKEN_EXPIRED', message: '만료' } }, 401));
+		auth.token = 'expired';
+
+		await expect(authRequest('/api/v1/trips', { fetchImpl: fetchMock })).rejects.toMatchObject({
+			status: 401
+		});
+
+		expect(auth.token).toBeNull();
 	});
 });
