@@ -1,7 +1,7 @@
 from datetime import date
 
 from app.enums import TripStatus, UserRole
-from tests.factories import make_trip, make_user
+from tests.factories import make_trip, make_trip_master_data, make_user
 
 
 async def test_make_user_creates_department_when_omitted(db_session):
@@ -31,3 +31,16 @@ async def test_make_user_ids_are_unique(db_session):
 
     assert first.email != second.email
     assert first.employee_no != second.employee_no
+
+
+async def test_make_trip_master_data_is_safe_on_seeded_session(seeded):
+    """seed_all이 이미 만든 코드그룹·코스트센터와 겹쳐도 UniqueViolation 없이 통과해야 한다."""
+    await make_trip_master_data(seeded)
+
+
+async def test_make_user_with_manager_inherits_manager_department(db_session):
+    manager = await make_user(db_session)
+
+    report = await make_user(db_session, manager=manager)
+
+    assert report.department_id == manager.department_id

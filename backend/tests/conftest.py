@@ -1,5 +1,5 @@
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 
 import httpx
 import pytest
@@ -75,7 +75,7 @@ async def seeded(db_session) -> AsyncSession:
 
 
 @pytest.fixture
-def login_as(client):
+def login_as(client) -> Callable[[str], Awaitable[dict[str, str]]]:
     """이메일로 로그인해 Authorization 헤더를 만든다. seeded와 함께 쓴다."""
 
     async def _login(email: str) -> dict[str, str]:
