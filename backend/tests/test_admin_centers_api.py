@@ -2,6 +2,8 @@
 
 import pytest
 
+from tests.factories import make_trip, make_user
+
 
 @pytest.mark.parametrize("kind", ["fund-centers", "cost-centers"])
 async def test_employee_cannot_read_admin_centers(client, seeded, login_as, kind):
@@ -144,3 +146,31 @@ async def test_missing_center_is_404(client, seeded, login_as):
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "CENTER_NOT_FOUND"
+
+
+async def test_center_referenced_only_by_a_trip_cannot_be_deleted(
+    client, seeded, login_as, db_session
+):
+    """_REFERENCES의 Trip 항목만 지키는 테스트.
+
+    시드의 CC2100은 출장·정산서 양쪽이 참조하므로, 그것만 보면 Trip 항목을 지워도
+    정산서 항목이 대신 걸려 통과한다. 여기서는 참조처를 출장 하나로 한정한다.
+    """
+    headers = await login_as("admin@skon.example")
+    created = (
+        await client.post(
+            "/api/v1/admin/cost-centers",
+            headers=headers,
+            json={"code": "CC9990", "name": "출장만참조"},
+        )
+    ).json()
+    owner = await make_user(db_session)
+    await make_trip(db_session, user=owner, cost_center_code="CC9990")
+    await db_session.commit()
+
+    response = await client.delete(
+        f"/api/v1/admin/cost-centers/{created['id']}", headers=headers
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "HAS_DEPENDENTS"
