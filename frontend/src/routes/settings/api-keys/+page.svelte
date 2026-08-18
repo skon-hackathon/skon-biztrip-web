@@ -33,6 +33,7 @@
 	let copyNotice = $state('');
 	let keyInput = $state<HTMLInputElement | null>(null);
 	let confirmingId = $state<number | null>(null);
+	let revoking = $state(false);
 
 	onMount(load);
 
@@ -101,6 +102,10 @@
 	}
 
 	async function revoke(id: number): Promise<void> {
+		// 발급과 같은 이유로 재진입을 막는다. 두 번째 요청은 409로 떨어져 "폐기에 실패했습니다"가
+		// 뜨는데, 실제로는 폐기가 된 상태라 사용자가 혼란스러워진다.
+		if (revoking) return;
+		revoking = true;
 		try {
 			await revokeApiKey(id);
 			confirmingId = null;
@@ -108,6 +113,8 @@
 			await load();
 		} catch (error) {
 			errorMessage = error instanceof ApiError ? error.message : '폐기에 실패했습니다';
+		} finally {
+			revoking = false;
 		}
 	}
 </script>

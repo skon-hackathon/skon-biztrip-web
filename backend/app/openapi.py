@@ -19,6 +19,10 @@ _SECURITY_SCHEMES = {
 }
 
 _SECURITY = [{"BearerAuth": []}, {"ApiKeyAuth": []}]
+#: JWT 전용 경로의 security. 설명 문구로만 "로그인 세션 전용"이라고 적으면 사람은 읽지만
+#: 스키마를 기계로 읽는 Agent는 ApiKeyAuth가 유효하다고 믿고 키로 호출했다가 403을 받는다.
+#: 이 모듈의 존재 이유가 바로 그 Agent이므로 기계가 읽는 자리에도 같은 사실을 적는다.
+_JWT_ONLY_SECURITY = [{"BearerAuth": []}]
 
 #: JWT 전용 경로. API Key로는 열리지 않는다 (키가 키를 낳지 못하게).
 _JWT_ONLY_PREFIX = "/api/v1/api-keys"
@@ -65,13 +69,15 @@ def build_openapi(app: FastAPI):
             operation = schema.get("paths", {}).get(path, {}).get(method.lower())
             if operation is None:  # pragma: no cover - 소진 가드가 먼저 잡는다
                 continue
-            operation["security"] = _SECURITY
-            if scope is None:
+            if path.startswith(_JWT_ONLY_PREFIX):
+                operation["security"] = _JWT_ONLY_SECURITY
+                note = "**로그인 세션 전용** — API Key로는 호출할 수 없습니다."
+            elif scope is None:
+                operation["security"] = _SECURITY
                 note = "**스코프 불필요** — 인증만 하면 호출할 수 있습니다."
             else:
+                operation["security"] = _SECURITY
                 note = f"**필요 스코프**: `{scope}`"
-            if path.startswith(_JWT_ONLY_PREFIX):
-                note = "**로그인 세션 전용** — API Key로는 호출할 수 없습니다."
             existing = operation.get("description", "")
             operation["description"] = f"{existing}\n\n{note}".strip()
 

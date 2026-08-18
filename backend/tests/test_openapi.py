@@ -36,3 +36,16 @@ async def test_jwt_only_endpoints_are_marked(client):
     schema = (await client.get("/openapi.json")).json()
     description = schema["paths"]["/api/v1/api-keys"]["post"]["description"]
     assert "로그인 세션 전용" in description
+
+
+async def test_jwt_only_endpoints_do_not_advertise_the_api_key_scheme(client):
+    """설명 문구가 아니라 `security`에도 적혀야 한다.
+
+    Agent는 스키마를 기계로 읽는다. 여기에 ApiKeyAuth가 남아 있으면 키로 호출해도 된다고
+    믿고 403을 받는다 — 이 모듈이 존재하는 이유가 바로 그 독자다.
+    """
+    schema = (await client.get("/openapi.json")).json()
+    for path in ("/api/v1/api-keys", "/api/v1/api-keys/{key_id}/revoke"):
+        for operation in schema["paths"][path].values():
+            names = {name for entry in operation["security"] for name in entry}
+            assert names == {"BearerAuth"}, f"{path}: {names}"

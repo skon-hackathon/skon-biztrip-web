@@ -192,6 +192,16 @@ curl로 Agent 경로를 그대로 밟았다: `BT-2026-0020` 완료 처리 → �
 - `COMPLETED → SETTLED` 연결 완료.
 - `ActivityAction`은 그대로 두기로 결정.
 
+### 최종 리뷰가 잡아낸 것
+
+브랜치 전체를 대상으로 한 리뷰에서 3건을 고쳤다.
+
+| 결함 | 실제 영향 |
+|---|---|
+| JWT 전용 엔드포인트의 OpenAPI `security`에 `ApiKeyAuth`가 남아 있었다 | 설명 문구에만 "로그인 세션 전용"이라 적혀 있었다. **스키마를 기계로 읽는 Agent** — 이 모듈의 존재 이유인 바로 그 독자 — 는 키로 호출해도 된다고 믿고 403을 받는다. `test_jwt_only_endpoints_do_not_advertise_the_api_key_scheme`가 고정한다 |
+| `pyproject.toml`이 `fastapi>=0.115`를 선언했다 | `iter_route_contexts`는 0.141에 들어왔다. 하한 버전에서는 소진 가드가 라우트를 0개로 세면서 **조용히 통과**한다 — 스코프 안전성 전체가 이 함수에 걸려 있다. `>=0.141`로 올렸다 |
+| `/settings/api-keys`의 `revoke()`에 재진입 가드가 없었다 | 두 번째 요청이 409로 떨어져 "폐기에 실패했습니다"가 뜨는데 실제로는 폐기된 상태다 |
+
 ### mutation 검증 목록
 
 가드를 넣을 때마다 그 줄을 망가뜨려 테스트가 실제로 깨지는지 확인했다.
@@ -323,6 +333,7 @@ curl로 Agent 경로를 그대로 밟았다.
 - **`admin` 스코프에 엔드포인트가 없다.** Phase 5에서 `/admin/*`을 만들면 `SCOPE_REQUIREMENTS`에 `ApiKeyScope.ADMIN`으로 등록해야 한다. 빠뜨리면 조용히 통과하는 게 아니라 **기동이 실패**한다(소진 가드).
 - **키 발급·폐기는 `activity_log`에 남지 않는다.** `EntityType`이 `TRIP|EXPENSE_REPORT`뿐이라 새 멤버가 필요하고 spec에 없다. 감사 요구가 생기면 그때 넣는다.
 - **rate limit·IP 제한 없음** (spec 7이 명시적으로 범위 밖).
+- **`MAX_ACTIVE_KEYS` 검사에 TOCTOU가 있다.** 동시에 두 건을 발급하면 둘 다 개수 검사를 통과할 수 있다. 상한이 한 개 넘는 것뿐이고 권한 상승이 아니라 그대로 뒀다. 엄밀히 막으려면 유니크 제약이나 advisory lock이 필요하다 (`next_trip_no`의 `max()+1`과 같은 종류의 미결).
 - **검증 중 만든 데모 데이터가 운영 DB에 남아 있다.** 출장 `BT-2026-0042`(SUBMITTED)와 폐기된 API Key 2건(user1·admin). 실제 사용 흔적이라 지우지 않았다.
 
 ## 이후 Phase
