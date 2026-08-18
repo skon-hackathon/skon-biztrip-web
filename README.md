@@ -9,15 +9,15 @@ SK온 사내 출장시스템을 모사한 데모 웹 애플리케이션. 출장 
 - Phase 현황·이월 항목: [`docs/phase-status.md`](docs/phase-status.md)
 - 디자인 규칙: [`DESIGN.md`](DESIGN.md)
 
-## 현재 상태 — Phase 2 (출장) 완료
+## 현재 상태 — Phase 3 (정산) 완료
 
 | 영역 | 내용 |
 |---|---|
 | 백엔드 | FastAPI, 14테이블 스키마, JWT 인증, 출장 CRUD·상태전이·타임라인·알림 API, 카드내역·자동매칭·정산서 API, 공통코드/센터 조회, 수동 시드 CLI, 테스트 **408건** |
-| 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰 적용, 로그인·라우트가드, 출장 신청/목록/상세/수정, 결재함, 알림, 대시보드, 테스트 **45건** |
+| 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰 적용, 로그인·라우트가드, 출장 신청/목록/상세/수정, 결재함, 알림, 대시보드, 법인카드 내역, 정산서 작성·결재, 테스트 **55건** |
 | 배포 | Dockerfile 2종, nginx ingress, 3서비스 compose |
 
-**동작하는 흐름**: 출장 신청 → 상신 → 결재자 알림 → 결재함 → 승인/반려 → (반려 시) 재작성 → 재상신 → 완료 처리. 모든 전이가 타임라인에 남는다.
+**동작하는 흐름**: 출장 신청 → 상신 → 결재자 알림 → 결재함 → 승인/반려 → (반려 시) 재작성 → 재상신 → 완료 처리 → **정산서 작성 → 자동매칭으로 카드내역 담기 → 제출 → 결재 → 승인 시 출장이 정산완료로 자동 전이**. 모든 전이가 타임라인에 남는다.
 
 개발자(`/developers`) 화면은 Phase 4에서 추가된다. 상단 내비의 해당 탭은 현재 404다.
 
@@ -43,7 +43,27 @@ curl -s -X POST localhost:8000/api/v1/trips -H "Authorization: Bearer $TOKEN" \
        "accommodation_code":"HOTEL","cost_center_code":"CC2030","estimated_cost":"300000"}'
 
 curl -s -X POST localhost:8000/api/v1/trips/41/submit -H "Authorization: Bearer $TOKEN"
+
+# 완료된 출장의 정산서를 만들고, 자동매칭 후보를 사유와 함께 받는다
+curl -s -X POST localhost:8000/api/v1/expenses -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"trip_id":30}'
+
+curl -s localhost:8000/api/v1/expenses/13/match-candidates -H "Authorization: Bearer $TOKEN"
+# [{"transaction_id":812,"merchant_name":"코레일","amount_krw":"114500.00",
+#   "reasons":["출장기간 내 승인"],"suggested_category_code":"TRANSPORT","already_added":false}, ...]
+
+# 후보를 담고, 비용처리 부서를 지정하고, 제출한다
+curl -s -X POST localhost:8000/api/v1/expenses/13/items -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"card_transaction_id":812,"expense_category_code":"TRANSPORT"}'
+
+curl -s -X PATCH localhost:8000/api/v1/expenses/13 -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"fund_center_code":"FC1010"}'
+
+curl -s -X POST localhost:8000/api/v1/expenses/13/submit -H "Authorization: Bearer $TOKEN"
 ```
+
+매칭 사유 문자열(`출장기간 내 승인` · `출발 전일 교통비` 등)은 화면이 보여주는 것과 **글자까지 같다** — 사람과 Agent가 같은 설명을 받는다.
 
 에러는 항상 같은 모양이다. `code`는 기계가 읽는 도메인 코드이며, 409에서 Agent가 재시도 여부를 판단하는 근거다.
 
@@ -116,8 +136,8 @@ cd frontend && npm run dev
 ## 테스트
 
 ```bash
-cd backend  && uv run pytest          # 293건
-cd frontend && npm test               # 45건
+cd backend  && uv run pytest          # 408건
+cd frontend && npm test               # 55건
 cd frontend && npm run check          # 타입체크 (0 errors / 0 warnings)
 ```
 
