@@ -59,7 +59,7 @@ class TripFilters:
     size: int = 20
 
 
-async def _names_by_id(session: AsyncSession, user_ids: set[int]) -> dict[int, str]:
+async def load_user_names(session: AsyncSession, user_ids: set[int]) -> dict[int, str]:
     if not user_ids:
         return {}
     rows = await session.execute(select(User.id, User.name).where(User.id.in_(user_ids)))
@@ -70,7 +70,7 @@ async def build_list_items(session: AsyncSession, trips: list[Trip]) -> list[Tri
     ids = {trip.user_id for trip in trips} | {
         trip.approver_id for trip in trips if trip.approver_id is not None
     }
-    names = await _names_by_id(session, ids)
+    names = await load_user_names(session, ids)
     return [
         TripListItem(
             id=trip.id,
@@ -470,7 +470,7 @@ async def list_timeline(session: AsyncSession, *, user: User, trip_id: int) -> l
         .scalars()
         .all()
     )
-    names = await _names_by_id(session, {row.actor_id for row in rows})
+    names = await load_user_names(session, {row.actor_id for row in rows})
     return [
         TimelineEntry(
             id=row.id,
