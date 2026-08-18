@@ -104,7 +104,7 @@ SCOPE_DESCRIPTIONS: dict[ApiKeyScope, str] = {
     ApiKeyScope.EXPENSES_READ: "정산 조회 — 목록·상세·매칭후보·타임라인",
     ApiKeyScope.EXPENSES_WRITE: "정산 쓰기 — 생성·항목 편집·제출·결재",
     ApiKeyScope.CARDS_READ: "법인카드 조회 — 카드 목록·카드거래",
-    ApiKeyScope.ADMIN: "관리자 API (Phase 5에서 열림)",
+    ApiKeyScope.ADMIN: "관리자 API — 공통코드·센터·부서·사용자·법인카드 마스터 CRUD",
 }
 
 

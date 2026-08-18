@@ -24,8 +24,15 @@ _SECURITY = [{"BearerAuth": []}, {"ApiKeyAuth": []}]
 #: 이 모듈의 존재 이유가 바로 그 Agent이므로 기계가 읽는 자리에도 같은 사실을 적는다.
 _JWT_ONLY_SECURITY = [{"BearerAuth": []}]
 
-#: JWT 전용 경로. API Key로는 열리지 않는다 (키가 키를 낳지 못하게).
+#: JWT 전용 경로. API Key로는 열리지 않는다 (키가 키를 낳지 못하게, 키가 사람이 되지 못하게).
 _JWT_ONLY_PREFIX = "/api/v1/api-keys"
+#: 접두어로는 잡히지 않는 개별 경로. 비밀번호 설정은 /admin/users 아래 있지만
+#: 그 형제 라우트들은 키로 열려 있어야 한다.
+_JWT_ONLY_PATHS = frozenset({"/api/v1/admin/users/{user_id}/password"})
+
+
+def _is_jwt_only(path: str) -> bool:
+    return path.startswith(_JWT_ONLY_PREFIX) or path in _JWT_ONLY_PATHS
 
 _DESCRIPTION = """\
 SK온 출장시스템 데모 API.
@@ -69,7 +76,7 @@ def build_openapi(app: FastAPI):
             operation = schema.get("paths", {}).get(path, {}).get(method.lower())
             if operation is None:  # pragma: no cover - 소진 가드가 먼저 잡는다
                 continue
-            if path.startswith(_JWT_ONLY_PREFIX):
+            if _is_jwt_only(path):
                 operation["security"] = _JWT_ONLY_SECURITY
                 note = "**로그인 세션 전용** — API Key로는 호출할 수 없습니다."
             elif scope is None:
