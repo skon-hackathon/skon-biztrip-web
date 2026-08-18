@@ -7,21 +7,39 @@ SK온 사내 출장시스템을 모사한 데모 웹 애플리케이션. 출장 
 - 설계: [`docs/superpowers/specs/2026-08-12-skon-biztrip-web-design.md`](docs/superpowers/specs/2026-08-12-skon-biztrip-web-design.md)
 - 구현 계획: [`docs/superpowers/plans/`](docs/superpowers/plans/)
 - Phase 현황·이월 항목: [`docs/phase-status.md`](docs/phase-status.md)
+- 브라우저 수동 시나리오: [`docs/manual-scenarios.md`](docs/manual-scenarios.md)
 - 디자인 규칙: [`DESIGN.md`](DESIGN.md)
 
-## 현재 상태 — Phase 3 (정산) 완료
+## 현재 상태 — Phase 5 (운영) 완료
+
+spec 10의 5단계가 모두 끝났다.
 
 | 영역 | 내용 |
 |---|---|
-| 백엔드 | FastAPI, 14테이블 스키마, JWT 인증, 출장 CRUD·상태전이·타임라인·알림 API, 카드내역·자동매칭·정산서 API, 공통코드/센터 조회, 수동 시드 CLI, 테스트 **408건** |
-| 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰 적용, 로그인·라우트가드, 출장 신청/목록/상세/수정, 결재함, 알림, 대시보드, 법인카드 내역, 정산서 작성·결재, 테스트 **55건** |
-| 배포 | Dockerfile 2종, nginx ingress, 3서비스 compose |
+| 백엔드 | FastAPI, 14테이블 스키마, JWT + API Key 이중 인증, 출장·정산·카드 API, 자동매칭, 관리자 CRUD 28개, 엔드포인트별 스코프 표, 수동 시드 CLI, 테스트 **569건** |
+| 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰, 출장·결재·알림·대시보드, 법인카드·정산서, API Key 발급 화면, `/developers` 가이드, 관리자 화면 5종, 744px 반응형, 테스트 **73건** |
+| 배포 | Dockerfile 2종, nginx ingress, 3서비스 compose (DB는 스택 밖) |
 
-**동작하는 흐름**: 출장 신청 → 상신 → 결재자 알림 → 결재함 → 승인/반려 → (반려 시) 재작성 → 재상신 → 완료 처리 → **정산서 작성 → 자동매칭으로 카드내역 담기 → 제출 → 결재 → 승인 시 출장이 정산완료로 자동 전이**. 모든 전이가 타임라인에 남는다.
+**동작하는 흐름**: 출장 신청 → 상신 → 결재자 알림 → 결재함 → 승인/반려 → (반려 시) 재작성 → 완료 처리 → 정산서 작성 → 자동매칭으로 카드내역 담기 → 제출 → 결재 → 승인 시 출장이 정산완료로 자동 전이. 모든 전이가 타임라인에 남는다.
 
-개발자(`/developers`) 화면은 Phase 4에서 추가된다. 상단 내비의 해당 탭은 현재 404다.
+### 화면
 
-정산 화면은 `/expenses`(목록) · `/expenses/[id]`(작성·결재) · `/cards`(법인카드 사용내역)다. 완료된 출장 상세에서 "정산서 작성"으로 진입하면 자동매칭 후보가 사유와 함께 뜨고, 담은 항목의 부서(FC/CC)는 리포트 기본값을 상속하되 행 단위로 덮어쓸 수 있다. 정산서가 승인되면 해당 출장이 자동으로 정산완료(SETTLED)로 전이된다.
+```
+/login                 로그인
+/                      대시보드 (내 출장, 결재 대기, 미정산, 최근 알림)
+/trips · /trips/new · /trips/[id] · /trips/[id]/edit
+/approvals             결재함 (MANAGER·ADMIN)
+/cards                 내 법인카드 + 사용내역
+/expenses · /expenses/[id]        정산 목록 · 정산서 작성/결재
+/notifications
+/settings/api-keys     API Key 발급 · 조회 · 폐기
+/developers            API 가이드 (curl 예제 · 스코프 표 · /docs 링크)
+/admin/codes · /admin/centers · /admin/departments · /admin/users · /admin/cards   (ADMIN)
+```
+
+정산 화면은 완료된 출장 상세의 "정산서 작성"으로 진입한다. 자동매칭 후보가 사유와 함께 뜨고, 담은 항목의 부서(FC/CC)는 리포트 기본값을 상속하되 행 단위로 덮어쓸 수 있다.
+
+관리자 화면은 마스터 데이터(공통코드·Fund/Cost Center·부서·사용자·법인카드)를 고친다. 여기서 코드를 비활성화하면 **출장 신청 드롭다운과 API 검증이 함께 바뀐다** — 화면과 Agent가 같은 마스터를 본다.
 
 ### 웹 UI와 Agent가 같은 엔드포인트를 쓴다
 
@@ -70,6 +88,41 @@ curl -s -X POST localhost:8000/api/v1/expenses/13/submit -H "Authorization: Bear
 ```json
 {"error": {"code": "TRIP_INVALID_TRANSITION", "message": "SUBMITTED 상태에서 SUBMITTED 로 변경할 수 없습니다", "field": null}}
 ```
+
+### Agent는 API Key로 같은 일을 한다
+
+`/settings/api-keys`에서 키를 발급하면 `X-API-Key` 헤더 하나로 위 호출을 그대로 할 수 있다. 평문 키는 **발급 응답에서 한 번만** 나오고 DB에는 SHA-256만 남는다.
+
+```bash
+# 키 발급은 로그인 세션(JWT) 전용이다 — 키가 키를 낳지 못하게 막았다
+KEY=$(curl -s -X POST localhost:8000/api/v1/api-keys -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"정산 자동화 Agent","scopes":["trips:read","trips:write"]}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["key"])')
+
+curl -s localhost:8000/api/v1/trips -H "X-API-Key: $KEY"       # 사람과 같은 엔드포인트
+
+curl -s localhost:8000/api/v1/cards -H "X-API-Key: $KEY"
+# {"error":{"code":"SCOPE_REQUIRED","message":"이 요청에는 cards:read 스코프가 필요합니다","field":null}}
+```
+
+스코프는 `trips:read` · `trips:write` · `expenses:read` · `expenses:write` · `cards:read` · `admin` 여섯 가지다. 어떤 엔드포인트에 무엇이 필요한지는 `GET /api/v1/scopes`가 알려주고, `/developers` 화면과 `/docs`(OpenAPI)가 같은 표를 그린다 — 손으로 적은 문서가 아니라서 어긋날 수 없다.
+
+**표에 없는 엔드포인트는 통과가 아니라 403이다.** 라우트를 추가하고 스코프 표에 적지 않으면 앱이 아예 기동하지 않는다(임포트 시점 소진 가드). 조용히 전권이 되는 엔드포인트가 생기는 것보다 못 뜨는 게 낫다는 판단이다.
+
+### 관리자 API
+
+`role=ADMIN`이면서 키를 쓸 경우 `admin` 스코프까지 있어야 열린다. 마스터 데이터 삭제는 참조가 남아 있으면 409다.
+
+```bash
+curl -s -X POST localhost:8000/api/v1/admin/departments -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"code":"D500","name":"신규팀"}'
+
+curl -s -X DELETE localhost:8000/api/v1/admin/departments/1 -H "Authorization: Bearer $TOKEN"
+# {"error":{"code":"HAS_DEPENDENTS","message":"이 부서를 참조하는 사용자·센터가 있어 삭제할 수 없습니다","field":null}}
+```
+
+`user`·`department`·`code`·`fund_center`·`cost_center` 삭제는 500이 아니라 409로 돌려준다. Agent는 5xx를 재시도하므로, 절대 성공할 수 없는 요청에 재시도 루프가 걸리지 않게 하려는 것이다. 사용자는 삭제 자체가 없다(비활성화만) — 출장·정산·카드가 참조하고 감사 흔적을 지울 이유도 없다.
 
 ## 데이터베이스
 
@@ -129,15 +182,15 @@ cd frontend && npm run dev
 
 | 계정 | 역할 |
 |---|---|
-| `admin@skon.example` | ADMIN (관리자) |
+| `admin@skon.example` | ADMIN (관리자 — `/admin/*` 화면·API 접근) |
 | `manager1@skon.example` ~ `manager3@` | MANAGER (팀장, 결재자) |
 | `user1@skon.example` ~ `user10@` | EMPLOYEE (사원) |
 
 ## 테스트
 
 ```bash
-cd backend  && uv run pytest          # 408건
-cd frontend && npm test               # 55건
+cd backend  && uv run pytest          # 569건
+cd frontend && npm test               # 73건
 cd frontend && npm run check          # 타입체크 (0 errors / 0 warnings)
 ```
 
@@ -153,6 +206,14 @@ docker compose -p skon-prod down
 ```
 
 접속 정보는 저장소 루트의 `.env`로 주입한다. `DB_HOST`·`DB_USER`·`DB_PASSWORD`·`DB_NAME`·`JWT_SECRET`은 값이 없으면 compose가 기동을 거부한다.
+
+루트 `.env` 없이 `backend/.env`를 재사용하려면 두 가지를 함께 준다. 개발용 `DB_HOST=localhost`는 컨테이너 안에서 자기 자신을 가리키므로 반드시 덮어써야 한다.
+
+```bash
+DB_HOST=host.docker.internal docker compose --env-file backend/.env -p skon-prod up -d --build
+```
+
+**Phase 5 시점에 컨테이너 기동은 재검증되지 않았다.** 이미지 빌드가 Docker 데몬의 `ghcr.io` 조회 타임아웃(`DeadlineExceeded`)으로 실패했다 — 코드 문제가 아니라 그 환경의 네트워크 제약이다. 백엔드 임포트(`uv run python -c "import app.main"`)와 프론트 `npm run build`, API curl 시나리오는 통과했다. 자세한 내용은 [`docs/phase-status.md`](docs/phase-status.md)의 "배포 검증 — 미완" 절에 있다.
 
 컨테이너 안에서 CLI를 쓰려면:
 

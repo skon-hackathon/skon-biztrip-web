@@ -5,6 +5,7 @@ SK온 사내 출장시스템을 모사한 데모 웹. 실제 회계·전표 처�
 - 설계: `docs/superpowers/specs/2026-08-12-skon-biztrip-web-design.md`
 - 구현 계획: `docs/superpowers/plans/` — Phase별로 하나씩. **작업 전 해당 Phase plan을 읽을 것.**
 - Phase 현황·이월 항목: `docs/phase-status.md` — **새 Phase를 시작하기 전에 읽을 것.**
+- 브라우저 수동 시나리오: `docs/manual-scenarios.md` — 33건 미확인. 화면을 건드렸으면 해당 항목을 돌리고 체크한다.
 - 디자인 규칙: `DESIGN.md`
 
 Phase 1(기반)·Phase 2(출장)·Phase 3(정산)·Phase 4(개발자)·Phase 5(운영) 완료.
@@ -36,6 +37,7 @@ docker compose -p skon-prod up -d --build   # http://localhost
 
 ```
 backend/app/  routers/ → services/ → models/   (3계층, 라우터에 로직 두지 않음)
+              routers/admin/ → services/admin/  (관리자 CRUD, 같은 3계층)
 frontend/src/ lib/components/ · lib/api/ · lib/stores/ · routes/
 ingress/      nginx.conf (운영 리버스 프록시)
 ```

@@ -314,6 +314,14 @@ curl로 Agent 경로를 그대로 밟았다.
 
 ---
 
+### 문서 갱신 누락 (Phase 5 이후 정정)
+
+Phase 4는 `CLAUDE.md`와 이 문서만 갱신하고 **`README.md`를 건드리지 않았다.** 그래서 README가 Phase 3 상태(`"현재 상태 — Phase 3 (정산) 완료"`, 테스트 408/55건)에 머물렀고, `/developers` 탭을 "Phase 4에서 추가된다. 지금은 404"라고 설명하고 있었다 — 실제로는 이미 동작하는 화면이었다. API Key 발급·스코프도 README에 한 줄도 없었다.
+
+Phase 5 완료 후 README를 현재 상태로 끌어올렸다: Phase 5 기준 요약표·화면 목록·API Key/스코프 절·관리자 API 절·테스트 수치(569/73)·배포 시 `--env-file`과 `DB_HOST` 주의. **Phase가 끝나면 갱신 대상은 세 개다 — `CLAUDE.md` · `docs/phase-status.md` · `README.md`.**
+
+---
+
 ## Phase 5 — 완료
 
 계획서 23개 태스크를 인라인으로 실행했다(서브에이전트 없음). 태스크마다 테스트 선작성 → 구현 → mutation 검증 순서를 지켰다.
