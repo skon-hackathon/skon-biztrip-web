@@ -261,3 +261,89 @@ export interface ScopeInfo {
 	description: string;
 	endpoints: string[];
 }
+
+export interface Department {
+	id: number;
+	code: string;
+	name: string;
+	parent_id: number | null;
+}
+
+export interface DepartmentInput {
+	code: string;
+	name: string;
+	parent_id?: number | null;
+}
+
+export interface AdminCode {
+	id: number;
+	code: string;
+	name: string;
+	sort_order: number;
+	is_active: boolean;
+	extra: Record<string, unknown>;
+}
+
+export interface AdminCodeGroup {
+	id: number;
+	group_code: string;
+	name: string;
+	description: string | null;
+	is_active: boolean;
+	codes: AdminCode[];
+}
+
+export interface AdminCenter {
+	id: number;
+	code: string;
+	name: string;
+	department_id: number | null;
+	is_active: boolean;
+}
+
+/** FC/CC는 컬럼도 규칙도 같아서 화면 하나가 탭으로 다룬다. */
+export type CenterKind = 'fund-centers' | 'cost-centers';
+
+export interface AdminUser {
+	id: number;
+	email: string;
+	name: string;
+	employee_no: string;
+	department_id: number;
+	department_name: string;
+	position_code: string;
+	manager_id: number | null;
+	manager_name: string | null;
+	role: UserRole;
+	is_active: boolean;
+}
+
+export interface AdminUserInput {
+	email: string;
+	password: string;
+	name: string;
+	employee_no: string;
+	department_id: number;
+	position_code: string;
+	manager_id?: number | null;
+	role?: UserRole;
+	is_active?: boolean;
+}
+
+export interface AdminUserPatch {
+	name?: string;
+	department_id?: number;
+	position_code?: string;
+	manager_id?: number | null;
+	role?: UserRole;
+	is_active?: boolean;
+}
+
+export interface AdminCard {
+	id: number;
+	user_id: number;
+	user_name: string;
+	card_no_masked: string;
+	brand: string;
+	is_active: boolean;
+}

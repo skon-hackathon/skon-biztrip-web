@@ -19,6 +19,7 @@ _TW = ApiKeyScope.TRIPS_WRITE
 _ER = ApiKeyScope.EXPENSES_READ
 _EW = ApiKeyScope.EXPENSES_WRITE
 _CR = ApiKeyScope.CARDS_READ
+_AD = ApiKeyScope.ADMIN
 
 #: (HTTP 메서드, FastAPI 라우트 경로) -> 필요 스코프. None은 "인증만 하면 됨".
 #:
@@ -67,6 +68,34 @@ SCOPE_REQUIREMENTS: dict[tuple[str, str], ApiKeyScope | None] = {
     ("POST", "/api/v1/expenses/{report_id}/approve"): _EW,
     ("POST", "/api/v1/expenses/{report_id}/reject"): _EW,
     ("POST", "/api/v1/expenses/{report_id}/reopen"): _EW,
+    ("GET", "/api/v1/admin/departments"): _AD,
+    ("POST", "/api/v1/admin/departments"): _AD,
+    ("PATCH", "/api/v1/admin/departments/{department_id}"): _AD,
+    ("DELETE", "/api/v1/admin/departments/{department_id}"): _AD,
+    ("GET", "/api/v1/admin/code-groups"): _AD,
+    ("POST", "/api/v1/admin/code-groups"): _AD,
+    ("PATCH", "/api/v1/admin/code-groups/{group_id}"): _AD,
+    ("DELETE", "/api/v1/admin/code-groups/{group_id}"): _AD,
+    ("POST", "/api/v1/admin/code-groups/{group_id}/codes"): _AD,
+    ("PATCH", "/api/v1/admin/codes/{code_id}"): _AD,
+    ("DELETE", "/api/v1/admin/codes/{code_id}"): _AD,
+    ("GET", "/api/v1/admin/fund-centers"): _AD,
+    ("POST", "/api/v1/admin/fund-centers"): _AD,
+    ("PATCH", "/api/v1/admin/fund-centers/{center_id}"): _AD,
+    ("DELETE", "/api/v1/admin/fund-centers/{center_id}"): _AD,
+    ("GET", "/api/v1/admin/cost-centers"): _AD,
+    ("POST", "/api/v1/admin/cost-centers"): _AD,
+    ("PATCH", "/api/v1/admin/cost-centers/{center_id}"): _AD,
+    ("DELETE", "/api/v1/admin/cost-centers/{center_id}"): _AD,
+    ("GET", "/api/v1/admin/users"): _AD,
+    ("POST", "/api/v1/admin/users"): _AD,
+    ("GET", "/api/v1/admin/users/{user_id}"): _AD,
+    ("PATCH", "/api/v1/admin/users/{user_id}"): _AD,
+    ("POST", "/api/v1/admin/users/{user_id}/password"): _AD,
+    ("GET", "/api/v1/admin/cards"): _AD,
+    ("POST", "/api/v1/admin/cards"): _AD,
+    ("PATCH", "/api/v1/admin/cards/{card_id}"): _AD,
+    ("DELETE", "/api/v1/admin/cards/{card_id}"): _AD,
 }
 
 SCOPE_DESCRIPTIONS: dict[ApiKeyScope, str] = {
@@ -75,7 +104,7 @@ SCOPE_DESCRIPTIONS: dict[ApiKeyScope, str] = {
     ApiKeyScope.EXPENSES_READ: "정산 조회 — 목록·상세·매칭후보·타임라인",
     ApiKeyScope.EXPENSES_WRITE: "정산 쓰기 — 생성·항목 편집·제출·결재",
     ApiKeyScope.CARDS_READ: "법인카드 조회 — 카드 목록·카드거래",
-    ApiKeyScope.ADMIN: "관리자 API (Phase 5에서 열림)",
+    ApiKeyScope.ADMIN: "관리자 API — 공통코드·센터·부서·사용자·법인카드 마스터 CRUD",
 }
 
 

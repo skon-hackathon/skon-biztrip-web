@@ -49,3 +49,18 @@ async def test_jwt_only_endpoints_do_not_advertise_the_api_key_scheme(client):
         for operation in schema["paths"][path].values():
             names = {name for entry in operation["security"] for name in entry}
             assert names == {"BearerAuth"}, f"{path}: {names}"
+
+
+async def test_password_endpoint_does_not_advertise_the_api_key_scheme(client):
+    """스키마를 기계로 읽는 Agent가 키로 호출해도 된다고 믿으면 안 된다."""
+    schema = (await client.get("/openapi.json")).json()
+    operation = schema["paths"]["/api/v1/admin/users/{user_id}/password"]["post"]
+
+    assert operation["security"] == [{"BearerAuth": []}]
+
+
+async def test_admin_operations_declare_the_admin_scope(client):
+    schema = (await client.get("/openapi.json")).json()
+    operation = schema["paths"]["/api/v1/admin/users"]["get"]
+
+    assert "admin" in operation["description"]

@@ -49,10 +49,24 @@ def test_catalog_lists_endpoints_per_scope():
     assert "POST /api/v1/trips" not in trips_read.endpoints
 
 
-def test_admin_scope_has_no_endpoints_yet():
-    """/admin/*는 Phase 5다. 카탈로그는 빈 목록을 정직하게 노출한다."""
+def test_admin_scope_covers_every_admin_route():
+    """Phase 5에서 /admin/*이 열렸다. 카탈로그가 그 경로 전부를 admin으로 보여줘야 한다.
+
+    표에 admin 경로가 있는데 카탈로그가 다른 스코프로 묶으면 /developers 가이드가
+    Agent에게 잘못된 스코프를 안내한다.
+    """
     catalog = {entry.scope: entry for entry in scope_catalog()}
-    assert catalog[ApiKeyScope.ADMIN].endpoints == []
+    admin_endpoints = catalog[ApiKeyScope.ADMIN].endpoints
+
+    assert admin_endpoints, "admin 스코프에 엔드포인트가 하나도 없다"
+    assert all(endpoint.split(" ", 1)[1].startswith("/api/v1/admin/") for endpoint in admin_endpoints)
+
+    declared_admin_paths = {
+        f"{method} {path}"
+        for (method, path), scope in SCOPE_REQUIREMENTS.items()
+        if path.startswith("/api/v1/admin/")
+    }
+    assert set(admin_endpoints) == declared_admin_paths
 
 
 def test_table_has_no_duplicate_or_lowercase_methods():

@@ -101,32 +101,34 @@ export SKON_API_KEY=sk_live_...</pre>
 {#if errorMessage}
 	<p class="mt-4 text-body-sm text-error" role="alert">{errorMessage}</p>
 {:else}
-	<table class="mt-4 w-full border-collapse">
-		<thead>
-			<tr class="border-b border-hairline text-left text-caption text-muted">
-				<th class="py-3">스코프</th>
-				<th class="py-3">설명</th>
-				<th class="py-3">엔드포인트</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each scopes as info (info.scope)}
-				<tr class="border-b border-hairline align-top">
-					<td class="py-3 font-mono text-body-sm text-ink">{info.scope}</td>
-					<td class="py-3 text-body-sm text-muted">{info.description}</td>
-					<td class="py-3 font-mono text-body-sm text-muted">
-						{#if info.endpoints.length === 0}
-							—
-						{:else}
-							{#each info.endpoints as endpoint (endpoint)}
-								<div>{endpoint}</div>
-							{/each}
-						{/if}
-					</td>
+	<div class="mt-4 overflow-x-auto">
+		<table class="w-full min-w-[640px] border-collapse">
+			<thead>
+				<tr class="border-b border-hairline text-left text-caption text-muted">
+					<th class="py-3">스코프</th>
+					<th class="py-3">설명</th>
+					<th class="py-3">엔드포인트</th>
 				</tr>
-			{/each}
-		</tbody>
-	</table>
+			</thead>
+			<tbody>
+				{#each scopes as info (info.scope)}
+					<tr class="border-b border-hairline align-top">
+						<td class="py-3 font-mono text-body-sm text-ink">{info.scope}</td>
+						<td class="py-3 text-body-sm text-muted">{info.description}</td>
+						<td class="py-3 font-mono text-body-sm text-muted">
+							{#if info.endpoints.length === 0}
+								—
+							{:else}
+								{#each info.endpoints as endpoint (endpoint)}
+									<div>{endpoint}</div>
+								{/each}
+							{/if}
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 	<p class="mt-3 text-body-sm text-muted">
 		표에 없는 엔드포인트(<code class="font-mono">/auth/me</code>,
 		<code class="font-mono">/codes</code>, <code class="font-mono">/fund-centers</code>,
@@ -158,14 +160,16 @@ export SKON_API_KEY=sk_live_...</pre>
 			null,
 			2
 		)}</pre>
-	<table class="mt-4 w-full border-collapse">
-		<tbody>
-			{#each [['400', '입력 검증 실패 — field에 문제 필드가 담깁니다'], ['401', '인증 실패 — 키 없음·폐기(API_KEY_REVOKED)·만료(API_KEY_EXPIRED)'], ['403', '스코프 부족 — SCOPE_REQUIRED. 메시지에 필요한 스코프가 있습니다'], ['404', '리소스 없음 — 타인 리소스 접근도 404입니다'], ['409', '상태전이 위반 — code를 보고 재시도 여부를 판단하세요'], ['422', '스키마 위반 — SCHEMA_INVALID']] as [code, meaning] (code)}
-				<tr class="border-b border-hairline">
-					<td class="w-16 py-2 font-mono text-body-sm text-ink">{code}</td>
-					<td class="py-2 text-body-sm text-muted">{meaning}</td>
-				</tr>
-			{/each}
-		</tbody>
-	</table>
+	<div class="mt-4 overflow-x-auto">
+		<table class="w-full min-w-[560px] border-collapse">
+			<tbody>
+				{#each [['400', '입력 검증 실패 — field에 문제 필드가 담깁니다'], ['401', '인증 실패 — 키 없음·폐기(API_KEY_REVOKED)·만료(API_KEY_EXPIRED)'], ['403', '스코프 부족 — SCOPE_REQUIRED. 메시지에 필요한 스코프가 있습니다'], ['404', '리소스 없음 — 타인 리소스 접근도 404입니다'], ['409', '상태전이 위반 — code를 보고 재시도 여부를 판단하세요'], ['422', '스키마 위반 — SCHEMA_INVALID']] as [code, meaning] (code)}
+					<tr class="border-b border-hairline">
+						<td class="w-16 py-2 font-mono text-body-sm text-ink">{code}</td>
+						<td class="py-2 text-body-sm text-muted">{meaning}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 </Card>

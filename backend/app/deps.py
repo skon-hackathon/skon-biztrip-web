@@ -4,6 +4,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
+from app.enums import UserRole
 from app.errors import AuthError, ForbiddenError
 from app.models import User
 from app.security import decode_access_token
@@ -119,3 +120,23 @@ async def get_jwt_principal(request: Request, user: CurrentUser) -> User:
 
 
 JwtOnlyUser = Annotated[User, Depends(get_jwt_principal)]
+
+
+#: Admin 전용 라우트. 역할(사람)과 스코프(키)는 서로를 대체하지 않는다 —
+#: 역할만 보면 ADMIN이 발급한 `trips:read` 키가 admin API를 열고, 스코프만 보면
+#: admin 스코프를 가진 EMPLOYEE 소유 키가 통과한다. 둘 다 통과해야 한다.
+AdminUser = Annotated[User, Depends(require_role(UserRole.ADMIN))]
+
+
+async def require_jwt_admin(request: Request, user: AdminUser) -> User:
+    """관리자이면서 **로그인 세션**일 것. 비밀번호 설정 전용이다.
+
+    admin 스코프 키가 남의 비밀번호를 바꿀 수 있으면, 그 계정으로 로그인해 JWT를 얻고
+    JWT로 전권 키를 발급할 수 있다. 키 관리 API를 JWT 전용으로 둔 방어가 통째로 우회된다.
+    """
+    if getattr(request.state, "auth_method", None) != "jwt":
+        raise ForbiddenError("API_KEY_FORBIDDEN", "이 작업은 로그인 세션에서만 가능합니다")
+    return user
+
+
+JwtOnlyAdmin = Annotated[User, Depends(require_jwt_admin)]
