@@ -5,7 +5,7 @@
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import ColumnElement, func, or_, select
@@ -30,6 +30,7 @@ from app.schemas.expense import (
     ExpenseReportDetail,
     ExpenseReportListItem,
     ExpenseReportUpdate,
+    MatchCandidateOut,
 )
 from app.services.centers import assert_cost_center, assert_fund_center
 from app.services.codes import validate_codes
@@ -44,6 +45,7 @@ from app.services.expense_rules import (
     sum_included,
 )
 from app.services.history import record_transition
+from app.services.matching import TransactionView, find_candidates
 from app.services.numbering import next_report_no
 from app.services.trip_rules import assert_trip_owner
 from app.services.trips import load_user_names, load_visible_trip
@@ -471,3 +473,106 @@ async def delete_item(session: AsyncSession, *, user: User, item_id: int) -> Exp
     await _recalc_total(session, report)
     await session.commit()
     return await build_detail(session, report)
+
+
+#: 조회 창은 매칭 창(±1일)보다 하루 더 넓게 잡는다. KST 변환으로 경계가 최대 하루
+#: 움직이므로, 정확한 경계 판정은 순수 함수(find_candidates)에 맡기고 여기서는
+#: 넉넉히 읽어온다.
+_FETCH_MARGIN_DAYS = 2
+
+
+async def list_match_candidates(
+    session: AsyncSession, *, user: User, report_id: int
+) -> list[MatchCandidateOut]:
+    """자동매칭 후보 + 사유 (spec 5.6).
+
+    "누구 카드인가"와 "다른 제출완료 리포트가 가져갔는가"는 조회가 필요하므로 여기서
+    거른 뒤, 창·취소·사유 판정은 DB를 모르는 `matching.find_candidates`에 넘긴다.
+    """
+    report = await load_visible_report(session, report_id, user)
+    trip = await session.get(Trip, report.trip_id)
+
+    rows = (
+        (
+            await session.execute(
+                select(CardTransaction)
+                .join(CorporateCard, CorporateCard.id == CardTransaction.card_id)
+                .where(
+                    CorporateCard.user_id == report.user_id,
+                    CardTransaction.approved_at
+                    >= datetime.combine(
+                        trip.start_date - timedelta(days=_FETCH_MARGIN_DAYS),
+                        datetime.min.time(),
+                        tzinfo=timezone.utc,
+                    ),
+                    CardTransaction.approved_at
+                    < datetime.combine(
+                        trip.end_date + timedelta(days=_FETCH_MARGIN_DAYS + 1),
+                        datetime.min.time(),
+                        tzinfo=timezone.utc,
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # 다른 리포트가 제출완료(SUBMITTED 이상)로 이미 가져간 거래는 후보에서 뺀다.
+    # 자기 자신은 제외 대상이 아니다 — 제출된 정산서를 열었을 때 담은 항목이 후보
+    # 목록에서 통째로 사라지면 대조가 불가능해진다.
+    locked = set(
+        (
+            await session.execute(
+                select(ExpenseItem.card_transaction_id)
+                .join(ExpenseReport, ExpenseReport.id == ExpenseItem.report_id)
+                .where(
+                    ExpenseItem.card_transaction_id.is_not(None),
+                    ExpenseReport.id != report.id,
+                    ExpenseReport.status.in_(
+                        [ExpenseReportStatus.SUBMITTED, ExpenseReportStatus.APPROVED]
+                    ),
+                )
+            )
+        ).scalars()
+    )
+    added = set(
+        (
+            await session.execute(
+                select(ExpenseItem.card_transaction_id).where(
+                    ExpenseItem.report_id == report.id,
+                    ExpenseItem.card_transaction_id.is_not(None),
+                )
+            )
+        ).scalars()
+    )
+
+    by_id = {row.id: row for row in rows}
+    candidates = find_candidates(
+        start_date=trip.start_date,
+        end_date=trip.end_date,
+        transactions=[
+            TransactionView(
+                id=row.id,
+                approved_at=row.approved_at,
+                merchant_category_code=row.merchant_category_code,
+                amount_krw=row.amount_krw,
+                is_cancelled=row.is_cancelled,
+            )
+            for row in rows
+        ],
+        excluded_transaction_ids=frozenset(locked),
+    )
+    return [
+        MatchCandidateOut(
+            transaction_id=candidate.transaction_id,
+            approved_at=by_id[candidate.transaction_id].approved_at,
+            merchant_name=by_id[candidate.transaction_id].merchant_name,
+            merchant_category_code=by_id[candidate.transaction_id].merchant_category_code,
+            amount_krw=by_id[candidate.transaction_id].amount_krw,
+            suggested_category_code=candidate.suggested_category_code,
+            reasons=list(candidate.reasons),
+            already_added=candidate.transaction_id in added,
+        )
+        for candidate in candidates
+    ]

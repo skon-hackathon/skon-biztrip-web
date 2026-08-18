@@ -18,6 +18,7 @@ from app.services.expense_rules import MAX_ITEM_AMOUNT
 from app.services.expenses import (
     ExpenseFilters,
     add_item,
+    list_match_candidates,
     create_report,
     delete_item,
     update_item,
@@ -490,3 +491,103 @@ async def test_clearing_an_override_returns_to_inheritance(db_session):
     )
     assert detail.items[0].cost_center_code is None
     assert detail.items[0].effective_cost_center_code == "CC2030"
+
+
+async def test_match_candidates_come_from_the_owners_cards_within_the_window(db_session):
+    _, owner, trip, report, card = await _report_with_card(db_session)
+    inside = await make_card_transaction(db_session, card=card, approved_at=_during(trip, 1))
+    await make_card_transaction(db_session, card=card, approved_at=_during(trip, 30))
+
+    candidates = await list_match_candidates(db_session, user=owner, report_id=report.id)
+
+    assert [c.transaction_id for c in candidates] == [inside.id]
+    assert candidates[0].reasons == ["출장기간 내 승인"]
+    assert candidates[0].suggested_category_code == "MEAL"
+    assert candidates[0].already_added is False
+
+
+async def test_match_candidates_exclude_transactions_locked_by_another_report(db_session):
+    manager, owner = await _org(db_session)
+    card = await make_card(db_session, user=owner)
+    trip_a = await make_trip(
+        db_session, user=owner, status=TripStatus.COMPLETED, approver_id=manager.id
+    )
+    trip_b = await make_trip(
+        db_session,
+        user=owner,
+        status=TripStatus.COMPLETED,
+        approver_id=manager.id,
+        start_date=trip_a.start_date,
+        end_date=trip_a.end_date,
+    )
+    report_a = await make_expense_report(
+        db_session, trip=trip_a, approver=manager, status=ExpenseReportStatus.SUBMITTED
+    )
+    report_b = await make_expense_report(db_session, trip=trip_b, approver=manager)
+    transaction = await make_card_transaction(db_session, card=card, approved_at=_during(trip_a, 1))
+    await make_expense_item(db_session, report=report_a, card_transaction=transaction)
+
+    candidates = await list_match_candidates(db_session, user=owner, report_id=report_b.id)
+    assert candidates == []
+
+
+async def test_a_draft_report_does_not_lock_transactions(db_session):
+    """제출완료(SUBMITTED 이상)만 잠근다 (spec 5.6). DRAFT까지 잠그면 다른 정산서를
+    임시저장만 해 둔 채로 거래가 사라진다."""
+    manager, owner = await _org(db_session)
+    card = await make_card(db_session, user=owner)
+    trip_a = await make_trip(
+        db_session, user=owner, status=TripStatus.COMPLETED, approver_id=manager.id
+    )
+    trip_b = await make_trip(
+        db_session,
+        user=owner,
+        status=TripStatus.COMPLETED,
+        approver_id=manager.id,
+        start_date=trip_a.start_date,
+        end_date=trip_a.end_date,
+    )
+    report_a = await make_expense_report(db_session, trip=trip_a, approver=manager)
+    report_b = await make_expense_report(db_session, trip=trip_b, approver=manager)
+    transaction = await make_card_transaction(db_session, card=card, approved_at=_during(trip_a, 1))
+    await make_expense_item(db_session, report=report_a, card_transaction=transaction)
+
+    candidates = await list_match_candidates(db_session, user=owner, report_id=report_b.id)
+    assert [c.transaction_id for c in candidates] == [transaction.id]
+
+
+async def test_already_added_transactions_are_marked_not_hidden(db_session):
+    _, owner, trip, report, card = await _report_with_card(db_session)
+    transaction = await make_card_transaction(db_session, card=card, approved_at=_during(trip, 1))
+    await add_item(
+        db_session,
+        user=owner,
+        report_id=report.id,
+        payload=ExpenseItemCreate(
+            card_transaction_id=transaction.id, expense_category_code="MEAL"
+        ),
+    )
+    [candidate] = await list_match_candidates(db_session, user=owner, report_id=report.id)
+    assert candidate.transaction_id == transaction.id
+    assert candidate.already_added is True
+
+
+async def test_a_submitted_report_does_not_lock_itself_out_of_its_own_items(db_session):
+    """자기 자신이 잠근 거래까지 후보에서 빼면, 제출된 정산서를 열었을 때 담은 항목이
+    후보 목록에서 통째로 사라진다."""
+    manager, owner, trip, report, card = await _report_with_card(db_session)
+    transaction = await make_card_transaction(db_session, card=card, approved_at=_during(trip, 1))
+    await make_expense_item(db_session, report=report, card_transaction=transaction)
+    report.status = ExpenseReportStatus.SUBMITTED
+    await db_session.flush()
+
+    [candidate] = await list_match_candidates(db_session, user=owner, report_id=report.id)
+    assert candidate.transaction_id == transaction.id
+    assert candidate.already_added is True
+
+
+async def test_approver_can_read_match_candidates(db_session):
+    manager, owner, trip, report, card = await _report_with_card(db_session)
+    await make_card_transaction(db_session, card=card, approved_at=_during(trip, 1))
+    candidates = await list_match_candidates(db_session, user=manager, report_id=report.id)
+    assert len(candidates) == 1
