@@ -6,14 +6,26 @@ trip_no는 BT-9999-* 를 쓴다 — 채번 테스트(현재 연도)와 절대 �
 초기화되지 않아 `-k`·`--lf`·단일 파일 실행에 따라 값이 달라진다.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import TripStatus, UserRole
-from app.models import Code, CodeGroup, CostCenter, Department, FundCenter, Trip, User
+from app.enums import ExpenseReportStatus, TripStatus, UserRole
+from app.models import (
+    CardTransaction,
+    Code,
+    CodeGroup,
+    CorporateCard,
+    CostCenter,
+    Department,
+    ExpenseItem,
+    ExpenseReport,
+    FundCenter,
+    Trip,
+    User,
+)
 
 
 _counter = {"n": 0}
@@ -134,6 +146,8 @@ async def make_trip_master_data(session: AsyncSession) -> None:
         "COUNTRY": ["KR", "US"],
         "TRANSPORT": ["RAIL", "AIR"],
         "ACCOMMODATION": ["HOTEL", "DORM"],
+        "EXPENSE_CATEGORY": ["MEAL", "TRANSPORT", "LODGING", "ETC"],
+        "MERCHANT_CATEGORY": ["MEAL", "TRANSPORT", "LODGING", "ETC"],
     }
     existing_groups = set(
         (
@@ -154,3 +168,97 @@ async def make_trip_master_data(session: AsyncSession) -> None:
     ).scalar_one_or_none()
     if existing_center is None:
         await make_cost_center(session, cost_center_code)
+
+    fund_center_code = "FC1010"
+    existing_fund = (
+        await session.execute(select(FundCenter.code).where(FundCenter.code == fund_center_code))
+    ).scalar_one_or_none()
+    if existing_fund is None:
+        await make_fund_center(session, fund_center_code)
+
+
+async def make_card(session: AsyncSession, *, user: User, is_active: bool = True) -> CorporateCard:
+    n = _next()
+    card = CorporateCard(
+        user_id=user.id,
+        card_no_masked=f"5678-****-****-9{n:03d}",
+        brand="BC",
+        is_active=is_active,
+    )
+    session.add(card)
+    await session.flush()
+    return card
+
+
+async def make_card_transaction(
+    session: AsyncSession,
+    *,
+    card: CorporateCard,
+    approved_at: datetime,
+    merchant_category_code: str = "MEAL",
+    amount: Decimal = Decimal("30000"),
+    is_cancelled: bool = False,
+) -> CardTransaction:
+    transaction = CardTransaction(
+        card_id=card.id,
+        approved_at=approved_at,
+        merchant_name="한밭식당",
+        merchant_category_code=merchant_category_code,
+        amount=amount,
+        currency_code="KRW",
+        amount_krw=amount,
+        is_cancelled=is_cancelled,
+    )
+    session.add(transaction)
+    await session.flush()
+    return transaction
+
+
+async def make_expense_report(
+    session: AsyncSession,
+    *,
+    trip: Trip,
+    approver: User | None = None,
+    status: ExpenseReportStatus = ExpenseReportStatus.DRAFT,
+    fund_center_code: str | None = "FC1010",
+    cost_center_code: str | None = None,
+) -> ExpenseReport:
+    """report_no는 EX-9999-* 를 쓴다 — 채번 테스트(현재 연도)와 겹치지 않게 하기 위해서다."""
+    n = _next()
+    report = ExpenseReport(
+        report_no=f"EX-9999-{n:04d}",
+        trip_id=trip.id,
+        user_id=trip.user_id,
+        status=status,
+        fund_center_code=fund_center_code,
+        cost_center_code=cost_center_code or trip.cost_center_code,
+        approver_id=approver.id if approver else trip.approver_id,
+    )
+    session.add(report)
+    await session.flush()
+    return report
+
+
+async def make_expense_item(
+    session: AsyncSession,
+    *,
+    report: ExpenseReport,
+    amount: Decimal = Decimal("30000"),
+    card_transaction: CardTransaction | None = None,
+    expense_category_code: str = "MEAL",
+    is_excluded: bool = False,
+    fund_center_code: str | None = None,
+    cost_center_code: str | None = None,
+) -> ExpenseItem:
+    item = ExpenseItem(
+        report_id=report.id,
+        card_transaction_id=card_transaction.id if card_transaction else None,
+        expense_category_code=expense_category_code,
+        amount_krw=amount,
+        is_excluded=is_excluded,
+        fund_center_code=fund_center_code,
+        cost_center_code=cost_center_code,
+    )
+    session.add(item)
+    await session.flush()
+    return item
