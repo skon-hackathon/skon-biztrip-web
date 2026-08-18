@@ -135,3 +135,96 @@ export interface NotificationItem {
 export interface NotificationPage extends Page<NotificationItem> {
 	unread: number;
 }
+
+export type ExpenseStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
+
+export interface CardItem {
+	id: number;
+	card_no_masked: string;
+	brand: string;
+	is_active: boolean;
+}
+
+export interface CardTransactionItem {
+	id: number;
+	card_id: number;
+	approved_at: string;
+	merchant_name: string;
+	merchant_category_code: string;
+	amount: string;
+	currency_code: string;
+	amount_krw: string;
+	is_cancelled: boolean;
+}
+
+export interface ExpenseItem {
+	id: number;
+	card_transaction_id: number | null;
+	expense_category_code: string;
+	amount_krw: string;
+	memo: string | null;
+	is_excluded: boolean;
+	/** null이면 리포트 값 상속 */
+	fund_center_code: string | null;
+	cost_center_code: string | null;
+	effective_fund_center_code: string | null;
+	effective_cost_center_code: string | null;
+	merchant_name: string | null;
+	approved_at: string | null;
+}
+
+export interface ExpenseReportListItem {
+	id: number;
+	report_no: string;
+	status: ExpenseStatus;
+	trip_id: number;
+	trip_no: string;
+	trip_title: string;
+	trip_start_date: string;
+	trip_end_date: string;
+	user_id: number;
+	user_name: string;
+	approver_id: number | null;
+	approver_name: string | null;
+	fund_center_code: string | null;
+	cost_center_code: string | null;
+	total_amount_krw: string;
+	submitted_at: string | null;
+	approved_at: string | null;
+}
+
+export interface ExpenseReportDetail extends ExpenseReportListItem {
+	reject_reason: string | null;
+	created_at: string;
+	updated_at: string;
+	items: ExpenseItem[];
+}
+
+export interface MatchCandidate {
+	transaction_id: number;
+	approved_at: string;
+	merchant_name: string;
+	merchant_category_code: string;
+	amount_krw: string;
+	suggested_category_code: string;
+	reasons: string[];
+	already_added: boolean;
+}
+
+export interface ExpenseItemInput {
+	card_transaction_id?: number | null;
+	expense_category_code: string;
+	amount_krw?: string;
+	memo?: string | null;
+	fund_center_code?: string | null;
+	cost_center_code?: string | null;
+}
+
+export interface ExpenseItemPatch {
+	expense_category_code?: string;
+	amount_krw?: string;
+	memo?: string | null;
+	is_excluded?: boolean;
+	fund_center_code?: string | null;
+	cost_center_code?: string | null;
+}

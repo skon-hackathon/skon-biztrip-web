@@ -1,4 +1,5 @@
 import { authRequest } from '$lib/stores/auth.svelte';
+import { toQueryString } from './query';
 import type { Page, TimelineEntry, TripDetail, TripInput, TripListItem, TripStatus } from './types';
 
 export interface TripQuery {
@@ -14,15 +15,8 @@ export interface TripQuery {
 }
 
 export function tripQueryString(query: TripQuery): string {
-	const params = new URLSearchParams();
-	for (const [key, value] of Object.entries(query)) {
-		if (value === undefined || value === null || value === '') continue;
-		// status는 반복 파라미터다 (?status=A&status=B). 백엔드가 list로 받는다.
-		if (Array.isArray(value)) value.forEach((item) => params.append(key, String(item)));
-		else params.set(key, String(value));
-	}
-	const search = params.toString();
-	return search ? `?${search}` : '';
+	// status가 반복 파라미터로 나가는 규칙은 toQueryString이 담당한다.
+	return toQueryString(query as Record<string, unknown>);
 }
 
 export function listTrips(query: TripQuery = {}): Promise<Page<TripListItem>> {
