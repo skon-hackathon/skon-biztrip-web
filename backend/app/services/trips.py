@@ -35,6 +35,7 @@ from app.services.trip_rules import (
     assert_estimated_cost,
     assert_has_approver,
     assert_reject_reason,
+    assert_system_transition,
     assert_transition_allowed,
     assert_trip_owner,
     can_view_trip,
@@ -484,3 +485,33 @@ async def list_timeline(session: AsyncSession, *, user: User, trip_id: int) -> l
         )
         for row in rows
     ]
+
+
+async def settle_trip_for_report(
+    session: AsyncSession, *, trip: Trip, actor_id: int, report_no: str
+) -> None:
+    """정산서 승인이 트리거하는 COMPLETED → SETTLED (spec 5.4).
+
+    commit하지 않는다 — 정산서 승인과 **같은 트랜잭션**에서 끝나야 한다. 따로 커밋하면
+    정산서는 승인됐는데 출장은 COMPLETED로 남는 상태가 만들어질 수 있다.
+
+    사용자 경로(`assert_transition_allowed`)로는 이 전이를 통과할 수 없고, 반대로 이
+    함수는 사용자 주체 전이를 거부한다.
+    """
+    assert_system_transition(trip.status, TripStatus.SETTLED)
+
+    from_status = trip.status
+    trip.status = TripStatus.SETTLED
+    await session.flush()
+    await record_transition(
+        session,
+        entity_type=EntityType.TRIP,
+        entity_id=trip.id,
+        actor_id=actor_id,
+        action=ActivityAction.SETTLED,
+        from_status=from_status.value,
+        to_status=TripStatus.SETTLED.value,
+        # 알림은 정산서 쪽에서 EXPENSE_APPROVED 하나만 보낸다. 한 번의 승인으로 알림
+        # 두 개를 받을 이유가 없고, NotificationType에 TRIP_SETTLED도 없다.
+        memo=f"정산서 {report_no} 승인으로 정산 완료",
+    )
