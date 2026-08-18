@@ -6,7 +6,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.errors import register_error_handlers
-from app.routers import auth, centers, codes, notifications, trips
+from app.routers import auth, cards, centers, codes, notifications, trips
 
 
 @asynccontextmanager
@@ -29,6 +29,7 @@ app = FastAPI(
 )
 register_error_handlers(app)
 app.include_router(auth.router)
+app.include_router(cards.router)
 app.include_router(centers.router)
 app.include_router(codes.router)
 app.include_router(notifications.router)
