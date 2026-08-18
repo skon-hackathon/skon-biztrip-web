@@ -38,6 +38,10 @@
 	--spacing-xxl: 48px;
 	--spacing-section: 64px;
 
+	/* DESIGN.md breakpoints — 744px 미만은 모바일(햄버거 시트).
+	   기존 md:(768px)는 그대로 둔다. --breakpoint-md를 덮으면 13개 화면의 그리드가 함께 움직인다. */
+	--breakpoint-tablet: 744px;
+
 	/* Cereal 대체 — 한글 지원 */
 	--font-sans: 'Pretendard Variable', Pretendard, -apple-system, system-ui, sans-serif;
 
