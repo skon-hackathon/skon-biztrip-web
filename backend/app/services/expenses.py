@@ -12,23 +12,36 @@ from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import ActivityAction, EntityType, ExpenseReportStatus, UserRole
-from app.errors import ConflictError, ForbiddenError, NotFoundError
-from app.models import CardTransaction, ExpenseItem, ExpenseReport, Trip, User
+from app.errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.models import (
+    CardTransaction,
+    CorporateCard,
+    ExpenseItem,
+    ExpenseReport,
+    Trip,
+    User,
+)
 from app.schemas.common import Page
 from app.schemas.expense import (
+    ExpenseItemCreate,
     ExpenseItemOut,
+    ExpenseItemUpdate,
     ExpenseReportCreate,
     ExpenseReportDetail,
     ExpenseReportListItem,
     ExpenseReportUpdate,
 )
 from app.services.centers import assert_cost_center, assert_fund_center
+from app.services.codes import validate_codes
 from app.services.expense_rules import (
+    assert_item_amount,
     assert_report_creatable,
     assert_report_editable,
     assert_report_owner,
+    assert_report_total,
     can_view_report,
     effective_center,
+    sum_included,
 )
 from app.services.history import record_transition
 from app.services.numbering import next_report_no
@@ -301,5 +314,160 @@ async def update_report(
         to_status=report.status.value,
         memo="정산서 헤더 수정",
     )
+    await session.commit()
+    return await build_detail(session, report)
+
+
+async def _recalc_total(session: AsyncSession, report: ExpenseReport) -> None:
+    """비정규화 컬럼 total_amount_krw의 책임자는 서비스다 (모델 주석 참조).
+
+    제외(is_excluded) 항목은 빼고 더한다. 합계 상한을 여기서 보는 이유는 항목 상한만
+    두면 항목 여러 개로 컬럼을 넘길 수 있기 때문이다 — 그 오버플로는 flush에서 500이 된다.
+    """
+    rows = (
+        await session.execute(
+            select(ExpenseItem.amount_krw, ExpenseItem.is_excluded).where(
+                ExpenseItem.report_id == report.id
+            )
+        )
+    ).all()
+    total = sum_included([(amount, excluded) for amount, excluded in rows])
+    assert_report_total(total)
+    report.total_amount_krw = total
+
+
+async def _load_editable_report(
+    session: AsyncSession, *, user: User, report_id: int
+) -> ExpenseReport:
+    report = await load_visible_report(session, report_id, user)
+    assert_report_owner(user_id=user.id, owner_id=report.user_id)
+    assert_report_editable(report.status)
+    return report
+
+
+async def _load_item_for_edit(
+    session: AsyncSession, *, user: User, item_id: int
+) -> tuple[ExpenseItem, ExpenseReport]:
+    item = await session.get(ExpenseItem, item_id)
+    if item is None:
+        raise NotFoundError("EXPENSE_ITEM_NOT_FOUND", "정산 항목을 찾을 수 없습니다")
+    # 리포트 가시성 검사를 통과해야 항목의 존재를 알 수 있다. 남의 항목은 404다.
+    report = await _load_editable_report(session, user=user, report_id=item.report_id)
+    return item, report
+
+
+async def _assert_usable_transaction(
+    session: AsyncSession, *, report: ExpenseReport, transaction_id: int
+) -> CardTransaction:
+    """정산서 소유자의 카드 거래이고 취소되지 않았을 것."""
+    transaction = (
+        await session.execute(
+            select(CardTransaction)
+            .join(CorporateCard, CorporateCard.id == CardTransaction.card_id)
+            .where(
+                CardTransaction.id == transaction_id,
+                CorporateCard.user_id == report.user_id,
+                CardTransaction.is_cancelled.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if transaction is None:
+        raise ValidationError(
+            "INVALID_TRANSACTION",
+            "정산에 사용할 수 없는 카드 거래입니다",
+            field="card_transaction_id",
+        )
+    duplicated = (
+        await session.execute(
+            select(ExpenseItem.id).where(
+                ExpenseItem.report_id == report.id,
+                ExpenseItem.card_transaction_id == transaction_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if duplicated is not None:
+        # (report_id, card_transaction_id) unique 제약을 flush에서 맞으면 500이 된다.
+        raise ConflictError("EXPENSE_ITEM_DUPLICATE", "이미 담은 카드 거래입니다")
+    return transaction
+
+
+async def _validate_item_centers(session: AsyncSession, changes: dict) -> None:
+    """항목의 FC/CC는 override이므로 None(상속)은 검증하지 않는다."""
+    if changes.get("fund_center_code") is not None:
+        await assert_fund_center(session, changes["fund_center_code"])
+    if changes.get("cost_center_code") is not None:
+        await assert_cost_center(session, changes["cost_center_code"])
+
+
+async def add_item(
+    session: AsyncSession, *, user: User, report_id: int, payload: ExpenseItemCreate
+) -> ExpenseReportDetail:
+    report = await _load_editable_report(session, user=user, report_id=report_id)
+    values = payload.model_dump()
+
+    await validate_codes(
+        session,
+        [("EXPENSE_CATEGORY", "expense_category_code", values["expense_category_code"])],
+    )
+    await _validate_item_centers(session, values)
+
+    amount = values["amount_krw"]
+    if values["card_transaction_id"] is not None:
+        transaction = await _assert_usable_transaction(
+            session, report=report, transaction_id=values["card_transaction_id"]
+        )
+        if amount is None:
+            amount = transaction.amount_krw
+    elif amount is None:
+        raise ValidationError(
+            "AMOUNT_REQUIRED", "카드 거래를 연결하지 않으면 금액이 필요합니다", field="amount_krw"
+        )
+    assert_item_amount(amount)
+
+    session.add(
+        ExpenseItem(
+            report_id=report.id,
+            card_transaction_id=values["card_transaction_id"],
+            expense_category_code=values["expense_category_code"],
+            amount_krw=amount,
+            memo=values["memo"],
+            fund_center_code=values["fund_center_code"],
+            cost_center_code=values["cost_center_code"],
+        )
+    )
+    await session.flush()
+    await _recalc_total(session, report)
+    await session.commit()
+    return await build_detail(session, report)
+
+
+async def update_item(
+    session: AsyncSession, *, user: User, item_id: int, payload: ExpenseItemUpdate
+) -> ExpenseReportDetail:
+    item, report = await _load_item_for_edit(session, user=user, item_id=item_id)
+    changes = payload.model_dump(exclude_unset=True)
+
+    if changes.get("expense_category_code") is not None:
+        await validate_codes(
+            session,
+            [("EXPENSE_CATEGORY", "expense_category_code", changes["expense_category_code"])],
+        )
+    await _validate_item_centers(session, changes)
+    if changes.get("amount_krw") is not None:
+        assert_item_amount(changes["amount_krw"])
+
+    for name, value in changes.items():
+        setattr(item, name, value)
+    await session.flush()
+    await _recalc_total(session, report)
+    await session.commit()
+    return await build_detail(session, report)
+
+
+async def delete_item(session: AsyncSession, *, user: User, item_id: int) -> ExpenseReportDetail:
+    item, report = await _load_item_for_edit(session, user=user, item_id=item_id)
+    await session.delete(item)
+    await session.flush()
+    await _recalc_total(session, report)
     await session.commit()
     return await build_detail(session, report)
