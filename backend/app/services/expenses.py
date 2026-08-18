@@ -11,9 +11,16 @@ from decimal import Decimal
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import ActivityAction, EntityType, ExpenseReportStatus, UserRole
+from app.enums import (
+    ActivityAction,
+    EntityType,
+    ExpenseReportStatus,
+    NotificationType,
+    UserRole,
+)
 from app.errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.models import (
+    ActivityLog,
     CardTransaction,
     CorporateCard,
     ExpenseItem,
@@ -32,9 +39,13 @@ from app.schemas.expense import (
     ExpenseReportUpdate,
     MatchCandidateOut,
 )
+from app.schemas.trip import RejectRequest, TimelineEntry
 from app.services.centers import assert_cost_center, assert_fund_center
 from app.services.codes import validate_codes
 from app.services.expense_rules import (
+    assert_centers_present,
+    assert_expense_transition_allowed,
+    assert_has_items,
     assert_item_amount,
     assert_report_creatable,
     assert_report_editable,
@@ -42,13 +53,14 @@ from app.services.expense_rules import (
     assert_report_total,
     can_view_report,
     effective_center,
+    assert_trip_completed,
     sum_included,
 )
-from app.services.history import record_transition
+from app.services.history import NotifySpec, record_transition
 from app.services.matching import TransactionView, find_candidates
 from app.services.numbering import next_report_no
-from app.services.trip_rules import assert_trip_owner
-from app.services.trips import load_user_names, load_visible_trip
+from app.services.trip_rules import assert_has_approver, assert_reject_reason, assert_trip_owner
+from app.services.trips import load_user_names, load_visible_trip, settle_trip_for_report
 
 
 @dataclass(frozen=True)
@@ -575,4 +587,212 @@ async def list_match_candidates(
             already_added=candidate.transaction_id in added,
         )
         for candidate in candidates
+    ]
+
+
+def _link(report: ExpenseReport) -> str:
+    return f"/expenses/{report.id}"
+
+
+def _assert_transition(report: ExpenseReport, user: User, target: ExpenseReportStatus) -> None:
+    """전이 검사는 이 한 줄만 부른다 — 출장 쪽 `_assert_transition`과 같은 이유다.
+    적법성과 주체를 따로 부를 수 있게 열어두면 언젠가 한쪽만 부르고 그 실패는 조용하다.
+    """
+    assert_expense_transition_allowed(
+        report.status,
+        target,
+        user_id=user.id,
+        owner_id=report.user_id,
+        approver_id=report.approver_id,
+    )
+
+
+async def submit_report(
+    session: AsyncSession, *, user: User, report_id: int
+) -> ExpenseReportDetail:
+    report = await load_visible_report(session, report_id, user)
+    _assert_transition(report, user, ExpenseReportStatus.SUBMITTED)
+
+    trip = await session.get(Trip, report.trip_id)
+    assert_trip_completed(trip.status)
+
+    assert_centers_present(
+        fund_center_code=report.fund_center_code, cost_center_code=report.cost_center_code
+    )
+    # 마스터가 그 사이 비활성화됐을 수 있다. 제출은 마지막 검증 지점이다.
+    await assert_fund_center(session, report.fund_center_code)
+    await assert_cost_center(session, report.cost_center_code)
+
+    included = (
+        await session.execute(
+            select(func.count())
+            .select_from(ExpenseItem)
+            .where(ExpenseItem.report_id == report.id, ExpenseItem.is_excluded.is_(False))
+        )
+    ).scalar_one()
+    assert_has_items(included)
+    await _recalc_total(session, report)
+
+    approver_id = assert_has_approver(trip.approver_id)
+    from_status = report.status
+    report.status = ExpenseReportStatus.SUBMITTED
+    report.approver_id = approver_id
+    report.submitted_at = datetime.now(timezone.utc)
+    report.approved_at = None
+    report.reject_reason = None
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.EXPENSE_REPORT,
+        entity_id=report.id,
+        actor_id=user.id,
+        action=ActivityAction.SUBMITTED,
+        from_status=from_status.value,
+        to_status=ExpenseReportStatus.SUBMITTED.value,
+        notify=NotifySpec(
+            user_id=approver_id,
+            type=NotificationType.EXPENSE_SUBMITTED,
+            title="정산 결재 요청",
+            body=f"{user.name}님이 '{trip.title}' 출장의 정산서를 상신했습니다.",
+            link_url=_link(report),
+        ),
+    )
+    await session.commit()
+    return await build_detail(session, report)
+
+
+async def approve_report(
+    session: AsyncSession, *, user: User, report_id: int
+) -> ExpenseReportDetail:
+    report = await load_visible_report(session, report_id, user)
+    _assert_transition(report, user, ExpenseReportStatus.APPROVED)
+
+    trip = await session.get(Trip, report.trip_id)
+    from_status = report.status
+    report.status = ExpenseReportStatus.APPROVED
+    report.approved_at = datetime.now(timezone.utc)
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.EXPENSE_REPORT,
+        entity_id=report.id,
+        actor_id=user.id,
+        action=ActivityAction.APPROVED,
+        from_status=from_status.value,
+        to_status=ExpenseReportStatus.APPROVED.value,
+        notify=NotifySpec(
+            user_id=report.user_id,
+            type=NotificationType.EXPENSE_APPROVED,
+            title="정산이 승인되었습니다",
+            body=f"'{trip.title}' 출장의 정산서가 승인되어 정산 완료 처리되었습니다.",
+            link_url=_link(report),
+        ),
+    )
+    # 같은 트랜잭션에서 출장을 SETTLED로 보낸다. 여기서 실패하면 정산서 승인도 함께
+    # 롤백되는 것이 옳다 — 정산 완료인데 출장은 COMPLETED인 상태를 만들지 않는다.
+    await settle_trip_for_report(
+        session, trip=trip, actor_id=user.id, report_no=report.report_no
+    )
+    await session.commit()
+    return await build_detail(session, report)
+
+
+async def reject_report(
+    session: AsyncSession, *, user: User, report_id: int, payload: RejectRequest
+) -> ExpenseReportDetail:
+    report = await load_visible_report(session, report_id, user)
+    _assert_transition(report, user, ExpenseReportStatus.REJECTED)
+    reason = assert_reject_reason(payload.reason)
+
+    trip = await session.get(Trip, report.trip_id)
+    from_status = report.status
+    report.status = ExpenseReportStatus.REJECTED
+    report.reject_reason = reason
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.EXPENSE_REPORT,
+        entity_id=report.id,
+        actor_id=user.id,
+        action=ActivityAction.REJECTED,
+        from_status=from_status.value,
+        to_status=ExpenseReportStatus.REJECTED.value,
+        memo=reason,
+        notify=NotifySpec(
+            user_id=report.user_id,
+            type=NotificationType.EXPENSE_REJECTED,
+            title="정산서가 반려되었습니다",
+            body=f"'{trip.title}' 출장의 정산서가 반려되었습니다. 사유: {reason}",
+            link_url=_link(report),
+        ),
+    )
+    await session.commit()
+    return await build_detail(session, report)
+
+
+async def reopen_report(
+    session: AsyncSession, *, user: User, report_id: int
+) -> ExpenseReportDetail:
+    """반려된 정산서를 임시저장으로 되돌린다 (출장의 reopen_trip과 같은 이유).
+
+    이것이 없으면 반려된 정산서는 영원히 반려 상태로 남는다.
+    """
+    report = await load_visible_report(session, report_id, user)
+    _assert_transition(report, user, ExpenseReportStatus.DRAFT)
+
+    from_status = report.status
+    report.status = ExpenseReportStatus.DRAFT
+    report.submitted_at = None
+    report.approved_at = None
+    # reject_reason은 남긴다 — 다음 상신에서 submit_report가 지운다.
+    await session.flush()
+
+    await record_transition(
+        session,
+        entity_type=EntityType.EXPENSE_REPORT,
+        entity_id=report.id,
+        actor_id=user.id,
+        action=ActivityAction.UPDATED,
+        from_status=from_status.value,
+        to_status=ExpenseReportStatus.DRAFT.value,
+        memo="재작성을 위해 임시저장으로 되돌림",
+    )
+    await session.commit()
+    return await build_detail(session, report)
+
+
+async def list_report_timeline(
+    session: AsyncSession, *, user: User, report_id: int
+) -> list[TimelineEntry]:
+    report = await load_visible_report(session, report_id, user)
+    rows = (
+        (
+            await session.execute(
+                select(ActivityLog)
+                .where(
+                    ActivityLog.entity_type == EntityType.EXPENSE_REPORT,
+                    ActivityLog.entity_id == report.id,
+                )
+                .order_by(ActivityLog.created_at, ActivityLog.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    names = await load_user_names(session, {row.actor_id for row in rows})
+    return [
+        TimelineEntry(
+            id=row.id,
+            action=row.action,
+            from_status=row.from_status,
+            to_status=row.to_status,
+            memo=row.memo,
+            actor_id=row.actor_id,
+            actor_name=names.get(row.actor_id, ""),
+            created_at=row.created_at,
+        )
+        for row in rows
     ]
