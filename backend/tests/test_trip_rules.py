@@ -16,6 +16,7 @@ from app.services.trip_rules import (
     assert_estimated_cost,
     assert_has_approver,
     assert_reject_reason,
+    assert_system_transition,
     assert_transition_allowed,
     assert_trip_approver,
     assert_trip_owner,
@@ -242,3 +243,43 @@ def test_assert_transition_allowed_rejects_illegal_transition_for_correct_actor(
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "TRIP_INVALID_TRANSITION"
+
+
+def test_assert_system_transition_allows_completed_to_settled():
+    assert_system_transition(TripStatus.COMPLETED, TripStatus.SETTLED)
+
+
+def test_assert_system_transition_rejects_owner_transition():
+    """사용자 주체 전이를 시스템 통로로 우회할 수 없다.
+
+    이 가드가 없으면 정산 서비스가 실수로 submit·complete를 호출자 검증 없이
+    수행할 수 있는 통로가 열린다 — 그게 fail-open이다.
+    """
+    with pytest.raises(ForbiddenError) as exc_info:
+        assert_system_transition(TripStatus.DRAFT, TripStatus.SUBMITTED)
+    assert exc_info.value.code == "USER_TRANSITION_ONLY"
+
+
+def test_assert_system_transition_rejects_approver_transition():
+    with pytest.raises(ForbiddenError) as exc_info:
+        assert_system_transition(TripStatus.SUBMITTED, TripStatus.APPROVED)
+    assert exc_info.value.code == "USER_TRANSITION_ONLY"
+
+
+def test_assert_system_transition_rejects_illegal_transition():
+    """적법성을 권한보다 먼저 본다 — assert_transition_allowed와 순서를 맞춘다."""
+    with pytest.raises(ConflictError) as exc_info:
+        assert_system_transition(TripStatus.DRAFT, TripStatus.SETTLED)
+    assert exc_info.value.code == "TRIP_INVALID_TRANSITION"
+
+
+def test_user_path_still_rejects_the_system_transition():
+    with pytest.raises(ForbiddenError) as exc_info:
+        assert_transition_allowed(
+            TripStatus.COMPLETED,
+            TripStatus.SETTLED,
+            user_id=OWNER_ID,
+            owner_id=OWNER_ID,
+            approver_id=APPROVER_ID,
+        )
+    assert exc_info.value.code == "SYSTEM_TRANSITION_ONLY"

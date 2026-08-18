@@ -159,3 +159,17 @@ def assert_transition_allowed(
         assert_trip_approver(user_id=user_id, approver_id=approver_id)
     else:
         raise ForbiddenError("SYSTEM_TRANSITION_ONLY", "이 전이는 시스템에 의해서만 수행됩니다")
+
+
+def assert_system_transition(current: TripStatus, target: TripStatus) -> None:
+    """시스템만 수행하는 전이를 검사한다 (지금은 COMPLETED → SETTLED 하나뿐).
+
+    `assert_transition_allowed`와 **같은 표**를 읽는 것이 요점이다. 정산 서비스가
+    표를 건너뛰고 `trip.status = SETTLED`를 직접 대입하면 적법성 검사도, 이력도
+    없이 상태가 바뀐다. 그래서 시스템 경로에도 통로를 하나 만들어 주고, 그 통로가
+    사용자 주체 전이는 거부하게 한다 — 두 방향 모두 fail-closed다.
+    """
+    assert_trip_transition(current, target)
+    actor = TRANSITION_ACTOR[(current, target)]
+    if actor is not TransitionActor.SYSTEM:
+        raise ForbiddenError("USER_TRANSITION_ONLY", "이 전이는 사용자가 수행해야 합니다")
