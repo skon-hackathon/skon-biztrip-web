@@ -19,6 +19,7 @@ _TW = ApiKeyScope.TRIPS_WRITE
 _ER = ApiKeyScope.EXPENSES_READ
 _EW = ApiKeyScope.EXPENSES_WRITE
 _CR = ApiKeyScope.CARDS_READ
+_AD = ApiKeyScope.ADMIN
 
 #: (HTTP 메서드, FastAPI 라우트 경로) -> 필요 스코프. None은 "인증만 하면 됨".
 #:
@@ -67,6 +68,10 @@ SCOPE_REQUIREMENTS: dict[tuple[str, str], ApiKeyScope | None] = {
     ("POST", "/api/v1/expenses/{report_id}/approve"): _EW,
     ("POST", "/api/v1/expenses/{report_id}/reject"): _EW,
     ("POST", "/api/v1/expenses/{report_id}/reopen"): _EW,
+    ("GET", "/api/v1/admin/departments"): _AD,
+    ("POST", "/api/v1/admin/departments"): _AD,
+    ("PATCH", "/api/v1/admin/departments/{department_id}"): _AD,
+    ("DELETE", "/api/v1/admin/departments/{department_id}"): _AD,
 }
 
 SCOPE_DESCRIPTIONS: dict[ApiKeyScope, str] = {

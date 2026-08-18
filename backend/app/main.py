@@ -7,6 +7,7 @@ from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.errors import register_error_handlers
 from app.openapi import build_openapi
+from app.routers.admin import departments as admin_departments
 from app.routers import api_keys, auth, cards, centers, codes, expenses, meta, notifications, trips
 from app.services.api_scopes import assert_scope_table_complete
 
@@ -30,6 +31,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 register_error_handlers(app)
+app.include_router(admin_departments.router)
 app.include_router(api_keys.router)
 app.include_router(auth.router)
 app.include_router(cards.router)
