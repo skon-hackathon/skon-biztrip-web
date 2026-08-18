@@ -10,6 +10,7 @@ from app.openapi import build_openapi
 from app.routers.admin import centers as admin_centers
 from app.routers.admin import codes as admin_codes
 from app.routers.admin import departments as admin_departments
+from app.routers.admin import users as admin_users
 from app.routers import api_keys, auth, cards, centers, codes, expenses, meta, notifications, trips
 from app.services.api_scopes import assert_scope_table_complete
 
@@ -36,6 +37,7 @@ register_error_handlers(app)
 app.include_router(admin_centers.router)
 app.include_router(admin_codes.router)
 app.include_router(admin_departments.router)
+app.include_router(admin_users.router)
 app.include_router(api_keys.router)
 app.include_router(auth.router)
 app.include_router(cards.router)

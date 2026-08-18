@@ -87,6 +87,11 @@ SCOPE_REQUIREMENTS: dict[tuple[str, str], ApiKeyScope | None] = {
     ("POST", "/api/v1/admin/cost-centers"): _AD,
     ("PATCH", "/api/v1/admin/cost-centers/{center_id}"): _AD,
     ("DELETE", "/api/v1/admin/cost-centers/{center_id}"): _AD,
+    ("GET", "/api/v1/admin/users"): _AD,
+    ("POST", "/api/v1/admin/users"): _AD,
+    ("GET", "/api/v1/admin/users/{user_id}"): _AD,
+    ("PATCH", "/api/v1/admin/users/{user_id}"): _AD,
+    ("POST", "/api/v1/admin/users/{user_id}/password"): _AD,
 }
 
 SCOPE_DESCRIPTIONS: dict[ApiKeyScope, str] = {
