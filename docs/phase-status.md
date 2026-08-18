@@ -395,6 +395,41 @@ GET|POST        /api/v1/admin/cards  ·  PATCH|DELETE /api/v1/admin/cards/{card_
 - 결재자 이름을 행별 `session.get`으로 바꿔도 쿼리 수가 늘지 않는다. 목록 쿼리가 이미 적재한 identity map에서 나오기 때문이다. 실제로 늘어나는 것은 부서 조회이고 상한 테스트가 그것을 잡는다.
 - 시드의 `CC2100`은 출장·정산서 양쪽이 참조해서, `_REFERENCES`의 Trip 항목만 지워도 정산서 항목이 대신 걸렸다. 참조처를 출장 하나로 한정한 테스트를 따로 추가해 그 구멍을 닫았다.
 
+### 실서버 검증 (curl) — 완료
+
+로컬 uvicorn(`:8000`, 운영 DB 접속)에 대해 Agent 경로를 그대로 밟았다.
+
+| 확인 | 결과 |
+|---|---|
+| 헬스체크 | `/health` ok · `/health/db` schema=`skon` |
+| 부서 생성 | 201 `D500` |
+| 중복 부서코드 | 409 `DUPLICATE_DEPARTMENT_CODE` + `field=code` |
+| 참조 부서 삭제(D100) | 409 `HAS_DEPENDENTS` — **500이 아니다** |
+| admin 스코프 키로 코드그룹 생성 | 201 — 웹과 같은 엔드포인트를 키가 그대로 쓴다 |
+| `trips:read` 키로 `/admin/users` | 403 `SCOPE_REQUIRED` ("admin 스코프가 필요합니다") |
+| 사원 JWT로 `/admin/users` | 403 `FORBIDDEN_ROLE` |
+| admin 키로 비밀번호 변경 | 403 `API_KEY_FORBIDDEN` |
+| 한글 25자(75바이트) 비밀번호 | 400 `PASSWORD_TOO_LONG` + `field=password` |
+| CC2100 비활성화 후 출장 생성 | 400 `INVALID_COST_CENTER` — 관리 화면 토글이 업무 검증에 즉시 걸린다 |
+| 참조 센터 삭제 | 409 `HAS_DEPENDENTS` ("출장이(가) 이 센터를 참조") |
+| 활성 코드 삭제 | 409 `CODE_STILL_ACTIVE` |
+
+검증 후 되돌린 것: CC2100 재활성화, `D500` 삭제, `RISK_LEVEL` 그룹 삭제, 발급한 키 2개 폐기. 비밀번호는 실제로 바뀐 적이 없다(두 시도 모두 403/400으로 거부됐다).
+
+### 배포 검증 — 미완 (환경 제약)
+
+`docker compose -p skon-prod up -d --build`가 **이미지 빌드 단계에서 실패**했다. Docker 데몬이 베이스 이미지 메타데이터를 가져오지 못한다:
+
+```
+> [backend internal] load metadata for ghcr.io/astral-sh/uv:latest:
+target backend: failed to solve: DeadlineExceeded: context deadline exceeded
+```
+
+호스트에서 `registry-1.docker.io`는 응답하지만(401) 데몬의 `ghcr.io` 조회가 타임아웃한다. 코드 문제가 아니라 이 환경의 네트워크 제약이므로, **3서비스 기동·nginx 프록시·SPA fallback은 Phase 5에서 재검증되지 않았다.** 네트워크가 되는 환경에서 다시 돌려야 한다. 다음 두 가지도 함께 유의한다.
+
+- 저장소 루트에 `.env`가 없어 compose가 기동을 거부한다. `backend/.env`를 쓰려면 `--env-file backend/.env`가 필요하고, 그 파일의 `DB_HOST=localhost`는 컨테이너 안에서 자신을 가리키므로 `DB_HOST=host.docker.internal`로 덮어야 한다.
+- 대신 백엔드는 `uv run python -c "import app.main"`으로 임포트(=스코프 소진 가드)까지, 프론트는 `npm run build`로 정적 산출까지 확인했다.
+
 ### Phase 5에서 처리한 이월 항목
 
 - `/admin/*`을 `SCOPE_REQUIREMENTS`에 `ADMIN`으로 등록(28항목). 소진 가드가 실제로 동작하는 것을 mutation으로 확인했다.
@@ -431,6 +466,9 @@ GET|POST        /api/v1/admin/cards  ·  PATCH|DELETE /api/v1/admin/cards/{card_
 ## Phase 5에서 넘어온 항목
 
 **Phase 5가 새로 남긴 것**
+
+- **3서비스 컨테이너 기동이 재검증되지 않았다.** 이미지 빌드가 `ghcr.io` 조회 타임아웃으로 실패했다(위 "배포 검증 — 미완" 참조). 네트워크가 되는 환경에서 `docker compose -p skon-prod up -d --build`를 다시 돌리고 `/api/v1/health`·`/api/v1/health/db`·`/admin/codes` SPA fallback을 확인해야 한다.
+- **브라우저 수동 시나리오 33개가 여전히 미확인이다.** 목록은 [`manual-scenarios.md`](manual-scenarios.md)에 모았다(Phase 2 이월 8 + Phase 3 이월 6 + Phase 4 이월 9 + Phase 5 신규 10). Phase 5의 화면 5개와 햄버거 시트도 **렌더 확인이 전혀 안 됐다** — 타입체크·빌드·API(curl)만 통과한 상태다.
 
 - **부서 트리의 일반 순환(A→B→A)은 검사하지 않는다.** 자기 자신만 막는다. 데모 조직은 2단계이고 일반 순환 검출은 재귀 조회가 필요하다.
 - **유니크 검사에 TOCTOU가 있다.** 삽입 전 SELECT로 보므로 동시에 같은 코드를 만들면 둘 다 통과하고 DB 제약이 500으로 잡는다 (`MAX_ACTIVE_KEYS`와 같은 종류의 미결).
