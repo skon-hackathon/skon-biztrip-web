@@ -126,3 +126,155 @@ def test_key_state_is_pure():
         key_state(revoked_at=active, expires_at=active - timedelta(days=1), now=active)
         == "REVOKED"
     )
+
+
+from app.errors import ConflictError, NotFoundError, ValidationError
+from app.schemas.api_key import ApiKeyCreate
+from app.services.api_keys import MAX_ACTIVE_KEYS, create_key, list_keys, revoke_key
+
+
+async def test_create_returns_plaintext_once_and_stores_only_the_hash(db_session):
+    user = await make_user(db_session)
+    created = await create_key(
+        db_session,
+        user=user,
+        payload=ApiKeyCreate(name="에이전트 키", scopes=[ApiKeyScope.TRIPS_READ]),
+    )
+
+    assert created.key.startswith("sk_live_")
+    assert created.key_prefix == created.key[:16]
+    # 목록에는 평문이 없다
+    listed = await list_keys(db_session, user=user)
+    assert not hasattr(listed[0], "key")
+    assert listed[0].key_prefix == created.key_prefix
+
+
+async def test_create_rejects_an_unknown_scope(db_session):
+    user = await make_user(db_session)
+    with pytest.raises(ValidationError) as exc:
+        await create_key(
+            db_session, user=user, payload=ApiKeyCreate(name="x", scopes=["trips:delete"])
+        )
+    assert exc.value.code == "INVALID_SCOPE"
+    assert exc.value.field == "scopes"
+
+
+async def test_create_requires_at_least_one_scope(db_session):
+    """스코프 0개 키는 아무 것도 못 하므로 만들 이유가 없다. 만들게 두면 사용자가 헤맨다."""
+    user = await make_user(db_session)
+    with pytest.raises(ValidationError) as exc:
+        await create_key(db_session, user=user, payload=ApiKeyCreate(name="x", scopes=[]))
+    assert exc.value.code == "SCOPES_REQUIRED"
+
+
+async def test_create_deduplicates_scopes(db_session):
+    user = await make_user(db_session)
+    created = await create_key(
+        db_session,
+        user=user,
+        payload=ApiKeyCreate(
+            name="x", scopes=[ApiKeyScope.TRIPS_READ, ApiKeyScope.TRIPS_READ]
+        ),
+    )
+    assert created.scopes == ["trips:read"]
+
+
+async def test_create_sets_expiry_from_days(db_session):
+    user = await make_user(db_session)
+    created = await create_key(
+        db_session,
+        user=user,
+        payload=ApiKeyCreate(name="x", scopes=[ApiKeyScope.TRIPS_READ], expires_in_days=30),
+    )
+    assert created.expires_at is not None
+    delta = created.expires_at - datetime.now(timezone.utc)
+    assert timedelta(days=29) < delta <= timedelta(days=30)
+
+
+async def test_create_without_expiry_never_expires(db_session):
+    user = await make_user(db_session)
+    created = await create_key(
+        db_session, user=user, payload=ApiKeyCreate(name="x", scopes=[ApiKeyScope.TRIPS_READ])
+    )
+    assert created.expires_at is None
+
+
+async def test_active_key_count_is_capped(db_session):
+    user = await make_user(db_session)
+    for index in range(MAX_ACTIVE_KEYS):
+        await make_api_key(db_session, user=user, name=f"키{index}")
+
+    with pytest.raises(ConflictError) as exc:
+        await create_key(
+            db_session, user=user, payload=ApiKeyCreate(name="넘침", scopes=[ApiKeyScope.TRIPS_READ])
+        )
+    assert exc.value.code == "TOO_MANY_KEYS"
+
+
+async def test_revoked_keys_do_not_count_towards_the_cap(db_session):
+    user = await make_user(db_session)
+    for index in range(MAX_ACTIVE_KEYS):
+        await make_api_key(
+            db_session, user=user, name=f"키{index}", revoked_at=datetime.now(timezone.utc)
+        )
+
+    created = await create_key(
+        db_session, user=user, payload=ApiKeyCreate(name="새 키", scopes=[ApiKeyScope.TRIPS_READ])
+    )
+    assert created.key.startswith("sk_live_")
+
+
+async def test_list_shows_only_my_keys_newest_first(db_session):
+    mine = await make_user(db_session, name="나")
+    other = await make_user(db_session, name="남")
+    await make_api_key(db_session, user=other, name="남의 키")
+    await make_api_key(db_session, user=mine, name="내 키 1")
+    await make_api_key(db_session, user=mine, name="내 키 2")
+
+    listed = await list_keys(db_session, user=mine)
+
+    assert [item.name for item in listed] == ["내 키 2", "내 키 1"]
+
+
+async def test_list_reports_state(db_session):
+    user = await make_user(db_session)
+    await make_api_key(db_session, user=user, name="살아있음")
+    await make_api_key(
+        db_session, user=user, name="만료됨", expires_at=datetime.now(timezone.utc) - timedelta(days=1)
+    )
+    await make_api_key(db_session, user=user, name="폐기됨", revoked_at=datetime.now(timezone.utc))
+
+    states = {item.name: item.state for item in await list_keys(db_session, user=user)}
+
+    assert states == {"살아있음": "ACTIVE", "만료됨": "EXPIRED", "폐기됨": "REVOKED"}
+
+
+async def test_revoke_marks_the_key_and_kills_authentication(db_session):
+    user = await make_user(db_session)
+    raw, key = await make_api_key(db_session, user=user)
+
+    result = await revoke_key(db_session, user=user, key_id=key.id)
+
+    assert result.state == "REVOKED"
+    with pytest.raises(AuthError) as exc:
+        await authenticate_key(db_session, raw)
+    assert exc.value.code == "API_KEY_REVOKED"
+
+
+async def test_revoking_someone_elses_key_is_404(db_session):
+    mine = await make_user(db_session, name="나")
+    other = await make_user(db_session, name="남")
+    _, key = await make_api_key(db_session, user=other)
+
+    with pytest.raises(NotFoundError) as exc:
+        await revoke_key(db_session, user=mine, key_id=key.id)
+    assert exc.value.code == "API_KEY_NOT_FOUND"
+
+
+async def test_revoking_twice_is_409(db_session):
+    user = await make_user(db_session)
+    _, key = await make_api_key(db_session, user=user, revoked_at=datetime.now(timezone.utc))
+
+    with pytest.raises(ConflictError) as exc:
+        await revoke_key(db_session, user=user, key_id=key.id)
+    assert exc.value.code == "API_KEY_ALREADY_REVOKED"
