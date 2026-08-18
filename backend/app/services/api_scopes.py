@@ -150,20 +150,24 @@ def _authenticated_routes(app) -> set[tuple[str, str]]:
     return found
 
 
-def assert_scope_table_complete(app) -> None:
+def assert_scope_table_complete(
+    app,
+    requirements: dict[tuple[str, str], ApiKeyScope | None] = SCOPE_REQUIREMENTS,
+) -> None:
     """표와 실제 라우트가 정확히 일치하는지 임포트 시점에 확인한다.
 
     양방향으로 본다. 라우트가 표에 없으면 스코프 미선언이고, 표에 있는데 라우트가 없으면
     경로 변경 후 죽은 선언이 남은 것이다. 후자를 방치하면 다음 사람이 그 항목을 보고
     "이 경로는 보호되고 있다"고 잘못 믿는다.
+
+    `requirements` 기본값은 운영 표(`SCOPE_REQUIREMENTS`)다. 단위테스트가 작은 probe 앱을
+    검사할 때 자기만의 작은 표를 넘길 수 있도록 열어둔 것일 뿐, 운영 경로에서 검사를
+    느슨하게 만드는 용도가 아니다 — `app.main`은 인자 없이 호출해 항상 운영 표와 비교한다.
+    인증 라우트가 0개인데 `requirements`에 항목이 있으면 그것도 어긋남이다: 라우트 탐지
+    자체가 깨진 것일 수 있으므로 여기서 조용히 통과시키면 안 된다.
     """
     routes = _authenticated_routes(app)
-    if not routes:
-        # 인증하는 라우트가 하나도 없는 앱(단위테스트의 probe 등)은 스코프 개념 자체가
-        # 없다. 이 표(SCOPE_REQUIREMENTS)는 실제 서비스 앱을 겨냥한 것이라 그런 probe와
-        # 비교하면 표의 모든 항목이 "라우트가 없는 표 항목"으로 잡혀 오탐이 난다.
-        return
-    declared = set(SCOPE_REQUIREMENTS)
+    declared = set(requirements)
     missing = routes - declared
     extra = declared - routes
     if missing or extra:

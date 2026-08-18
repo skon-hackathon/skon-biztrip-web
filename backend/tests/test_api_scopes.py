@@ -80,7 +80,7 @@ def test_guard_rejects_an_authenticated_route_missing_from_the_table():
         return {}
 
     with pytest.raises(RuntimeError) as exc:
-        assert_scope_table_complete(probe)
+        assert_scope_table_complete(probe, requirements={})
     assert "GET /api/v1/unlisted" in str(exc.value)
 
 
@@ -92,7 +92,7 @@ def test_guard_ignores_routes_that_do_not_authenticate():
     async def open_route():
         return {}
 
-    assert_scope_table_complete(probe)  # 예외 없음
+    assert_scope_table_complete(probe, requirements={})  # 예외 없음
 
 
 def test_guard_rejects_a_table_entry_with_no_matching_route():
@@ -104,5 +104,25 @@ def test_guard_rejects_a_table_entry_with_no_matching_route():
         return {}
 
     with pytest.raises(RuntimeError) as exc:
-        assert_scope_table_complete(probe)
+        assert_scope_table_complete(
+            probe,
+            requirements={
+                ("GET", "/api/v1/auth/me"): None,
+                ("GET", "/api/v1/trips"): ApiKeyScope.TRIPS_READ,
+            },
+        )
+    assert "GET /api/v1/trips" in str(exc.value)
+
+
+def test_guard_rejects_an_app_with_no_authenticated_routes():
+    """인증 라우트가 0개인데 표에 항목이 있으면 라우트 탐지가 깨진 것이다. 조용히 통과하면
+    전 엔드포인트가 스코프 검사 없이 뜬다 — 가장 큰 사고가 가장 조용한 형태로 지나간다."""
+    probe = FastAPI()
+
+    @probe.get("/api/v1/open")
+    async def open_route():
+        return {}
+
+    with pytest.raises(RuntimeError) as exc:
+        assert_scope_table_complete(probe, requirements={("GET", "/api/v1/trips"): ApiKeyScope.TRIPS_READ})
     assert "GET /api/v1/trips" in str(exc.value)
