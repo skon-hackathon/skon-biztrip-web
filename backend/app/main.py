@@ -6,7 +6,9 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.errors import register_error_handlers
-from app.routers import auth, cards, centers, codes, expenses, notifications, trips
+from app.openapi import build_openapi
+from app.routers import api_keys, auth, cards, centers, codes, expenses, meta, notifications, trips
+from app.services.api_scopes import assert_scope_table_complete
 
 
 @asynccontextmanager
@@ -28,13 +30,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 register_error_handlers(app)
+app.include_router(api_keys.router)
 app.include_router(auth.router)
 app.include_router(cards.router)
 app.include_router(centers.router)
 app.include_router(codes.router)
 app.include_router(expenses.router)
+app.include_router(meta.router)
 app.include_router(notifications.router)
 app.include_router(trips.router)
+
+# 라우트를 추가하고 SCOPE_REQUIREMENTS에 적지 않으면 여기서 기동이 실패한다.
+# 조용히 전권을 얻는 엔드포인트가 생기는 것보다 못 뜨는 게 낫다.
+assert_scope_table_complete(app)
+app.openapi = build_openapi(app)
 
 
 @app.get("/api/v1/health")

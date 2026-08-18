@@ -7,7 +7,7 @@ SK온 사내 출장시스템을 모사한 데모 웹. 실제 회계·전표 처�
 - Phase 현황·이월 항목: `docs/phase-status.md` — **새 Phase를 시작하기 전에 읽을 것.**
 - 디자인 규칙: `DESIGN.md`
 
-Phase 1(기반)·Phase 2(출장)·Phase 3(정산) 완료. 다음은 Phase 4(개발자).
+Phase 1(기반)·Phase 2(출장)·Phase 3(정산)·Phase 4(개발자) 완료. 다음은 Phase 5(운영).
 
 ## 명령어
 
@@ -22,8 +22,8 @@ cd backend && uv run python -m app.cli init-db    # 스키마 + 없는 테이블
 cd backend && uv run python -m app.cli seed       # 데모 데이터 (멱등)
 
 # 테스트
-cd backend  && uv run pytest          # 408건
-cd frontend && npm test               # 55건
+cd backend  && uv run pytest          # 486건
+cd frontend && npm test               # 60건
 cd frontend && npm run check          # 타입체크, 0 errors / 0 warnings 유지
 
 # 배포 (3서비스 — DB는 스택 밖)
@@ -68,6 +68,14 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **금액은 컬럼 상한까지 서비스가 막는다.** `Numeric(14, 2)`를 넘는 값을 통과시키면 flush에서 Postgres numeric overflow가 나고 catch-all 핸들러에 걸려 **500**이 된다. Agent는 5xx를 재시도하므로 절대 성공할 수 없는 요청에 재시도 루프가 걸린다. `trip_rules.MAX_ESTIMATED_COST`가 그 방어선이다.
 
+**스코프 검사는 `get_principal` 안 한 곳에서만 한다.** 엔드포인트마다 `Depends(require_scope(...))`를 붙이는 방식은 쓰지 않는다 — 빠뜨리면 그 엔드포인트만 조용히 전권이 되는 fail-open이다. 필요 스코프는 `app/services/api_scopes.py`의 `SCOPE_REQUIREMENTS` 표가 유일하게 선언하며, `main.py`가 임포트 시점에 `assert_scope_table_complete(app)`로 표와 실제 라우트를 **양방향** 대조한다. **새 엔드포인트를 만들면 같은 커밋에서 표에 넣어야 하고, 빠뜨리면 앱이 뜨지 않는다.** 표에 없는 경로는 통과가 아니라 403이다.
+
+**`request.state.scopes`는 `UNRESTRICTED` 센티널과 동일성으로만 비교한다.** `if not scopes`나 `getattr(request.state, "scopes", None)`로 바꾸면 스코프가 빈 키가 전권을 얻는다. 인증 라우트가 0개로 잡히는 상황도 통과가 아니라 예외다 — 그건 "검사할 게 없다"가 아니라 라우트 탐지가 깨졌다는 뜻이고, 실제로 한 번 그렇게 됐다(fastapi 0.141은 `include_router` 라우트를 `_IncludedRouter`로 감싸므로 `iter_route_contexts`로 펼쳐야 한다).
+
+**키 관리 API는 JWT 전용이다.** `app/deps.py`의 `JwtOnlyUser`를 쓴다. API Key로 새 키를 발급할 수 있으면 `cards:read` 키 하나로 전권 키를 찍어낼 수 있어 스코프 제한 전체가 무의미해진다. 이 의존성은 `get_principal`을 거쳐 오므로 소진 가드가 해당 라우트도 함께 검사한다.
+
+**평문 API Key는 발급 응답에만 존재한다.** DB에는 SHA-256만 남는다(`ApiKeyOut`에는 `key` 필드가 없고 `ApiKeyCreated`에만 있다). 목록·상세 응답에 평문을 싣는 어떤 변경도 거부한다.
+
 **`AsyncSession`을 `asyncio.gather`로 병렬 사용하지 않는다.** 같은 세션에 `execute`를 병렬로 걸면 `InvalidRequestError`가 난다. 여러 조회를 묶어야 하면 `IN` 절로 쿼리 수를 줄인다 (`services/codes.py`의 `validate_codes`가 그 예 — 그룹 수와 무관하게 쿼리 2개).
 
 **`text-body` 클래스를 쓰지 않는다.** `--color-body` 때문에 Tailwind가 이걸 **색상** 유틸리티로 생성한다. 본문 타이포는 `text-body-md` / `text-body-sm`으로 명시한다. 에러가 나지 않고 조용히 틀린다.
@@ -95,12 +103,16 @@ Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 
 
 ## 다음 Phase로 넘어간 항목
 
-`docs/phase-status.md`의 "Phase 3에서 넘어온 항목" 절을 **Phase 4 착수 전에** 읽을 것. 요약하면:
+`docs/phase-status.md`의 "Phase 4에서 넘어온 항목" 절을 **Phase 5 착수 전에** 읽을 것. 요약하면:
 
-- `app/deps.py`가 JWT 인증에서 `request.state.scopes = UNRESTRICTED`(전용 센티널)를 넣는다. 스코프 검사기는 이 값을 **센티널과 동일성 비교**해야 한다. `getattr(request.state, "scopes", None)` 식으로 기본값을 두면 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는 fail-open이 된다.
-- 출장 상세가 정산서 존재 여부를 알기 위해 정산 목록을 `size=100`으로 훑는다. 정산서가 100건을 넘으면 놓친다.
-- 항목의 FC/CC override는 마스터 비활성화 시점에 재검증되지 않는다 (제출 시 헤더만 재검증).
-- 브라우저 수동 시나리오 14개가 미확인이다 (Phase 3 plan Task 24).
+- `/admin/*`을 만들면 `SCOPE_REQUIREMENTS`에 `ApiKeyScope.ADMIN`으로 등록해야 한다. 빠뜨리면 기동 실패다.
+- Admin 삭제는 `IntegrityError`를 409 `HAS_DEPENDENTS`로 변환해야 한다. 안 하면 500이 되고 Agent가 재시도한다.
+- 비밀번호 엔드포인트를 만들면 요청 스키마에서 72바이트를 막아야 한다(bcrypt 5.x는 자르지 않고 던지며, 한글은 24자면 넘는다).
+- **브라우저 수동 시나리오 23개 미확인.** Phase 4 화면 2개(`/settings/api-keys`·`/developers`)는 렌더 확인이 전혀 안 됐다 — 타입체크·빌드·curl만 통과한 상태다.
+- `last_used_at`을 API Key 요청마다 갱신(UPDATE + COMMIT)한다. 트래픽이 늘면 스로틀로 옮긴다.
+- 키 발급·폐기는 `activity_log`에 남지 않는다(`EntityType`에 멤버가 없다).
+- 출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다.
+- 항목의 FC/CC override는 마스터 비활성화 시점에 재검증되지 않는다.
 
 ## 환경 주의
 

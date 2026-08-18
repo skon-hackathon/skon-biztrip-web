@@ -1,20 +1,21 @@
 # Phase 현황 — 완료분과 다음 작업
 
-- 기준: Phase 3 (정산) 완료 시점
+- 기준: Phase 4 (개발자) 완료 시점
 - 설계: [`superpowers/specs/2026-08-12-skon-biztrip-web-design.md`](superpowers/specs/2026-08-12-skon-biztrip-web-design.md)
 - Phase 1 계획: [`superpowers/plans/2026-08-12-phase1-foundation.md`](superpowers/plans/2026-08-12-phase1-foundation.md)
 - Phase 2 계획: [`superpowers/plans/2026-08-17-phase2-trips.md`](superpowers/plans/2026-08-17-phase2-trips.md)
 - Phase 3 계획: [`superpowers/plans/2026-08-18-phase3-expenses.md`](superpowers/plans/2026-08-18-phase3-expenses.md)
+- Phase 4 계획: [`superpowers/plans/2026-08-18-phase4-developers.md`](superpowers/plans/2026-08-18-phase4-developers.md)
 
 | Phase | 범위 | 상태 |
 |---|---|---|
 | 1 | 기반 — 스키마·인증·SPA 골격·배포 | 완료 |
 | 2 | 출장 — 신청·목록·상세·수정·결재·타임라인·알림 | 완료 |
-| 3 | 정산 — 카드내역·자동매칭·정산서·FC/CC | **완료** |
-| 4 | 개발자 — API Key·스코프·`/developers` 가이드 | 다음 |
-| 5 | 운영 — Admin CRUD, 반응형, 배포 검증 | 대기 |
+| 3 | 정산 — 카드내역·자동매칭·정산서·FC/CC | 완료 |
+| 4 | 개발자 — API Key·스코프·`/developers` 가이드 | **완료** |
+| 5 | 운영 — Admin CRUD, 반응형, 배포 검증 | 다음 |
 
-**테스트**: 백엔드 408건 · 프론트 55건 · 타입체크 0 errors / 0 warnings · 빌드 성공
+**테스트**: 백엔드 486건 · 프론트 60건 · 타입체크 0 errors / 0 warnings · 빌드 성공
 
 ---
 
@@ -191,6 +192,16 @@ curl로 Agent 경로를 그대로 밟았다: `BT-2026-0020` 완료 처리 → �
 - `COMPLETED → SETTLED` 연결 완료.
 - `ActivityAction`은 그대로 두기로 결정.
 
+### 최종 리뷰가 잡아낸 것
+
+브랜치 전체를 대상으로 한 리뷰에서 3건을 고쳤다.
+
+| 결함 | 실제 영향 |
+|---|---|
+| JWT 전용 엔드포인트의 OpenAPI `security`에 `ApiKeyAuth`가 남아 있었다 | 설명 문구에만 "로그인 세션 전용"이라 적혀 있었다. **스키마를 기계로 읽는 Agent** — 이 모듈의 존재 이유인 바로 그 독자 — 는 키로 호출해도 된다고 믿고 403을 받는다. `test_jwt_only_endpoints_do_not_advertise_the_api_key_scheme`가 고정한다 |
+| `pyproject.toml`이 `fastapi>=0.115`를 선언했다 | `iter_route_contexts`는 0.141에 들어왔다. 하한 버전에서는 소진 가드가 라우트를 0개로 세면서 **조용히 통과**한다 — 스코프 안전성 전체가 이 함수에 걸려 있다. `>=0.141`로 올렸다 |
+| `/settings/api-keys`의 `revoke()`에 재진입 가드가 없었다 | 두 번째 요청이 409로 떨어져 "폐기에 실패했습니다"가 뜨는데 실제로는 폐기된 상태다 |
+
 ### mutation 검증 목록
 
 가드를 넣을 때마다 그 줄을 망가뜨려 테스트가 실제로 깨지는지 확인했다.
@@ -210,11 +221,103 @@ curl로 Agent 경로를 그대로 밟았다: `BT-2026-0020` 완료 처리 → �
 
 ---
 
-## Phase 3에서 넘어온 항목
+## Phase 4 — 완료
+
+21개 태스크. 태스크마다 구현 subagent 1 + 컨트롤러의 독립 검증(계획 원문과 diff 대조 + 직접 재현)으로 진행했다.
+
+### 백엔드 — 서비스 계층
+
+| 모듈 | 책임 |
+|---|---|
+| `services/api_scopes.py` | `SCOPE_REQUIREMENTS` 표(37항목) + `required_scope_for` + `scope_catalog` + `assert_scope_table_complete`. DB 접근 없음 |
+| `services/api_keys.py` | 키 생성·SHA-256 해시(순수) + `key_state`(순수) + 인증·발급·목록·폐기 |
+| `openapi.py` | securitySchemes 2종 주입 + 오퍼레이션 설명에 필요 스코프 표기 |
+| `deps.py` | JWT·API Key 이중 인증, 스코프 강제 단일 지점, `JwtOnlyUser` |
+
+### 백엔드 — API
+
+```
+GET|POST /api/v1/api-keys
+POST     /api/v1/api-keys/{key_id}/revoke
+GET      /api/v1/scopes
+```
+
+기존 33개 엔드포인트는 **코드 변경 없이** API Key로 열렸다. 인증과 스코프가 `get_principal` 한 곳에 있기 때문이다.
+
+### 프론트엔드
+
+| 항목 | 내용 |
+|---|---|
+| 화면 | `/settings/api-keys`(발급·조회·폐기) · `/developers`(가이드) — AppShell의 죽은 `/developers` 링크가 채워졌다 |
+| 데이터 계층 | `api/api-keys.ts` · `api/meta.ts` · `lib/api-keys.ts`(라벨·상태 톤·curl 스니펫, 순수) |
+
+### 확정한 설계 결정
+
+| 쟁점 | 결정 | 이유 |
+|---|---|---|
+| 스코프 검사 위치 | `get_principal` 안 **한 곳** + 라우트 표 | 엔드포인트별 `Depends(require_scope(...))`는 빠뜨리면 그 엔드포인트만 조용히 전권이 되는 fail-open. 상태전이에서 이미 세 번 겪었다 |
+| 표 정합성 | `assert_scope_table_complete(app)`를 `main.py`가 임포트 시점에 호출 | 라우트를 추가하고 표에 안 적으면 **기동 실패**. 표와 라우터는 같은 커밋에서 움직여야 한다 |
+| 키 관리 API 인증 | JWT 전용(`JwtOnlyUser`) | API Key가 키를 발급하면 `cards:read` 키 하나로 전권 키를 찍어낼 수 있어 스코프가 무의미해진다 |
+| 두 헤더 동시 | `X-API-Key` 우선 | 브라우저는 로그인 상태면 항상 Authorization을 보낸다. 명시적으로 얹은 키가 더 구체적인 의도이고, 무엇보다 결정적이어야 한다 |
+| 평문 키 | 발급 응답 1회. DB에는 SHA-256만 | spec 5.7. `ApiKeyOut`에는 `key` 필드가 아예 없다 |
+| 키 형식 | `sk_live_` + `token_hex(16)` (40자), 접두어 16자 표시 | 영숫자만이라 복사·URL·셸 인용 사고가 없다 |
+| 스코프 검증 위치 | Pydantic이 아니라 서비스 | Enum으로 강제하면 오타가 422 SCHEMA_INVALID로 떨어져 "어떤 값이 유효한지"를 못 알려준다. 400 `INVALID_SCOPE`가 유효값 목록을 메시지에 싣는다 |
+| 스코프 없는 엔드포인트 | `/auth/me`·`/codes`·`/fund-centers`·`/cost-centers`·`/notifications`·`/scopes`·`/api-keys` → `None` | spec이 스코프를 6종으로 고정했다. 마스터 데이터는 쓰기의 전제조건, 나머지는 본인 리소스. 단 표에 **명시적으로 `None`**을 적어야 소진 가드를 통과한다 |
+| `last_used_at` | 검증 성공 시 매번 갱신 후 그 자리에서 commit | 요청이 실패해 롤백돼도 "이 키가 쓰였다"는 사실은 남아야 한다 |
+| 키 개수 | 사용자당 활성 10개(`MAX_ACTIVE_KEYS`) | 폐기·만료된 키는 세지 않는다 |
+| 폐기 | soft(`revoked_at`), `POST .../revoke` | `DELETE`는 하드 삭제로 읽힌다. 감사 흔적을 남긴다 |
+| 시드 | 데모 키를 시드하지 않는다 | 리포지토리에 유효한 평문 키를 두지 않는다 |
+| 가이드 스코프 표 | `GET /scopes`가 `SCOPE_REQUIREMENTS`에서 뽑아 내려준다 | 화면에 하드코딩하면 집행되는 표와 조용히 어긋난다 |
+
+### 계획 자체의 결함 2건 (구현 중 발견)
+
+계획서에 적힌 코드가 틀렸고, 구현 subagent가 실증으로 잡아냈다. 둘 다 계획 문서도 함께 고쳤다.
+
+1. **`isinstance(route, APIRoute)`로 라우트를 훑으면 0개가 잡힌다.** fastapi 0.141에서 `include_router`로 등록한 라우트는 `app.routes`에 `_IncludedRouter`로 감싸여 있다(13개 중 `APIRoute`는 직접 등록한 헬스체크 2개뿐). `iter_route_contexts`로 펼쳐야 한다. 이걸 못 잡았으면 소진 가드가 **아무것도 검사하지 않으면서 통과**했을 것이다.
+2. **probe 앱을 운영 표와 비교하면 항상 어긋난다.** 계획의 probe 테스트는 33항목짜리 운영 표와 비교하고 있어서 통과가 수학적으로 불가능했다. 첫 수정안은 "인증 라우트가 0개면 통과"였는데 **이건 1번과 정확히 같은 fail-open**이라 되돌리고, 표를 인자로 주입하도록 바꿨다(`requirements=`). 운영 호출은 인자 없이 전체 표와 비교한다. "라우트 0개 + 표 비어있지 않음"은 탐지가 깨졌다는 뜻이므로 이제 예외를 던지며, `test_guard_rejects_an_app_with_no_authenticated_routes`가 그걸 고정한다.
+
+### 실서버 검증 완료
+
+curl로 Agent 경로를 그대로 밟았다.
+
+| 확인 | 결과 |
+|---|---|
+| JWT로 키 발급 | 201, `key`는 `sk_live_` + 32자, 접두어 `sk_live_2e39f882` |
+| 키로 `/auth/me` | 소유자(이민수) 반환 — 키가 사람을 대신한다 |
+| 스코프 부족 | `/cards`에 trips 전용 키 → 403 `SCOPE_REQUIRED` + "cards:read 스코프가 필요합니다" |
+| 키로 쓰기 전체 | 출장 생성 `BT-2026-0042` → 상신 `SUBMITTED` → 타임라인 `CREATED`·`SUBMITTED` |
+| 중복 상신 | 409 `TRIP_INVALID_TRANSITION` — 웹 경로와 같은 코드 |
+| 키가 키를 발급 | 403 `API_KEY_FORBIDDEN` |
+| `last_used_at` | 사용 직후 채워짐 |
+| 폐기 후 사용 | 401 `API_KEY_REVOKED` |
+| 없는 키 / 중복 폐기 / 잘못된 스코프 | 401 `INVALID_API_KEY` · 409 `API_KEY_ALREADY_REVOKED` · 400 `INVALID_SCOPE`(field=`scopes`) |
+| OpenAPI | `BearerAuth`·`ApiKeyAuth` 노출, `POST /trips` 설명에 **필요 스코프: `trips:write`**, `/auth/login`에는 security 없음, `/api-keys`는 "로그인 세션 전용" |
+
+### mutation 검증 목록
+
+가드를 넣을 때마다 그 줄을 망가뜨려 테스트가 실제로 깨지는지 확인했다.
+
+| 가드 | 깨진 것 |
+|---|---|
+| `SCOPE_REQUIREMENTS`에서 항목 1개 삭제 | 임포트 시점 `RuntimeError` (앱이 뜨지 않음) |
+| `scopes is UNRESTRICTED` → `if not scopes` | `test_empty_scope_key_is_not_unrestricted` (스코프 빈 키가 전권을 얻음) |
+| 라우트 탐지가 0개를 반환하는 상황 | `test_guard_rejects_an_app_with_no_authenticated_routes` |
+| `authenticate_key`의 REVOKED 분기 · `is_active` 검사 | 각 1건 |
+| `_validate_scopes`의 미지 스코프 검사 | 1건 |
+| 폐기의 소유자 조건(`key.user_id != user.id`) | 1건 |
+| 활성 개수 쿼리의 `revoked_at.is_(None)` | 1건 |
+| `X-API-Key` 분기 비활성화 | 신규 11건 전부 |
+| `submit_trip`의 `record_transition` 생략 | 타임라인 parity 테스트 1건 |
+| `TRIP_INVALID_TRANSITION` 코드 변경 | 에러계약 parity 테스트 1건 |
+
+---
+
+## Phase 4에서 넘어온 항목
 
 **UI**
 
-- **브라우저 수동 시나리오 14개 미확인.** Phase 2 이월 8개(딥링크·중복 제출·반려 재작성·전역 401 등) + Phase 3 신규 6개(카드 필터, 정산서 생성·승계, 담기, 부서 상속 토글, FC 누락 제출, 승인 후 출장 SETTLED 확인). 절차는 Phase 3 계획 Task 24에 있다.
+- **브라우저 수동 시나리오 23개 미확인.** Phase 2 이월 8개(딥링크·중복 제출·반려 재작성·전역 401 등) + Phase 3 이월 6개(카드 필터, 정산서 생성·승계, 담기, 부서 상속 토글, FC 누락 제출, 승인 후 출장 SETTLED 확인) + Phase 4 신규 9개(발급 흐름, 평문 1회 노출, 복사 폴백, 중복 제출 가드, 스코프 미선택, 폐기 2단계, 스코프 표 동기화, 헤더 탭, 전역 401). 절차는 Phase 3 계획 Task 24와 Phase 4 계획 Task 20에 있다. **Phase 4 화면 2개는 렌더 확인이 전혀 안 됐다** — 구현·검증 모두 브라우저 도구가 없는 환경에서 이뤄졌고, 타입체크·빌드·API 경로(curl)만 통과한 상태다.
+- **복사 폴백은 운영에서만 검증된다.** `/settings/api-keys`의 "복사"는 `navigator.clipboard`가 없을 때 `execCommand('copy')`로 떨어지는데, localhost는 SecureContext라 첫 경로가 항상 성공한다. 평문 HTTP 배포 후에 눌러봐야 한다.
 - **출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다.** 데모 규모에서는 충분하지만 정산서가 100건을 넘으면 놓친다. `trip_id` 필터나 전용 조회가 필요하다.
 - **알림 뱃지는 여전히 라우트 변경 시에만 갱신된다.** 폴링·SSE는 데모 범위 밖.
 - **대시보드 집계는 여전히 목록 API 4회 호출이다.**
@@ -226,19 +329,29 @@ curl로 Agent 경로를 그대로 밟았다: `BT-2026-0020` 완료 처리 → �
 - **`next_report_no`도 `max() + 1`이다.** 멀티 레플리카로 가면 `next_trip_no`와 함께 시퀀스나 advisory lock으로 옮긴다.
 - **매칭 후보 조회는 페이징이 없다.** 출장 기간 ±2일이라 건수가 작지만, 장기 출장에서는 커질 수 있다.
 - **운영 DB의 기존 시드 데이터는 옛 배정 규칙 그대로다** (위 "시드 결함 수정" 참조).
+- **`last_used_at`을 매 요청 갱신한다.** API Key 요청마다 UPDATE + COMMIT 1회. 데모 규모에서는 문제없지만 트래픽이 늘면 60초 스로틀이나 배치 갱신으로 옮긴다. 지금은 "마지막 사용"이 실시간으로 움직이는 게 데모 포인트라 그대로 뒀다.
+- **`admin` 스코프에 엔드포인트가 없다.** Phase 5에서 `/admin/*`을 만들면 `SCOPE_REQUIREMENTS`에 `ApiKeyScope.ADMIN`으로 등록해야 한다. 빠뜨리면 조용히 통과하는 게 아니라 **기동이 실패**한다(소진 가드).
+- **키 발급·폐기는 `activity_log`에 남지 않는다.** `EntityType`이 `TRIP|EXPENSE_REPORT`뿐이라 새 멤버가 필요하고 spec에 없다. 감사 요구가 생기면 그때 넣는다.
+- **rate limit·IP 제한 없음** (spec 7이 명시적으로 범위 밖).
+- **`MAX_ACTIVE_KEYS` 검사에 TOCTOU가 있다.** 동시에 두 건을 발급하면 둘 다 개수 검사를 통과할 수 있다. 상한이 한 개 넘는 것뿐이고 권한 상승이 아니라 그대로 뒀다. 엄밀히 막으려면 유니크 제약이나 advisory lock이 필요하다 (`next_trip_no`의 `max()+1`과 같은 종류의 미결).
+- **검증 중 만든 데모 데이터가 운영 DB에 남아 있다.** 출장 `BT-2026-0042`(SUBMITTED)와 폐기된 API Key 2건(user1·admin). 실제 사용 흔적이라 지우지 않았다.
 
 ## 이후 Phase
 
 | Phase | 범위 |
 |---|---|
-| 4 | 개발자 — API Key 발급·폐기·스코프, `/developers` 가이드, OpenAPI 정리 |
 | 5 | 운영 — Admin(공통코드·센터·사용자·부서·카드), 반응형, 배포 재검증 |
 
-**Phase 4 착수 시 반드시 볼 것**: `app/deps.py`가 JWT 인증에서 `request.state.scopes = UNRESTRICTED`(전용 센티널)를 넣는다. 스코프 검사기는 이 값을 **센티널과 동일성 비교**해야 하며, `getattr(request.state, "scopes", None)`처럼 기본값을 두고 "값이 없으면 통과" 식으로 쓰면 안 된다. 그러면 "제한 없음"과 "`get_principal`이 아예 실행되지 않음"이 구분되지 않아, 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는 fail-open이 된다.
+**Phase 5 착수 시 반드시 볼 것**
+
+- **새 엔드포인트를 만들면 같은 커밋에서 `SCOPE_REQUIREMENTS`에 넣어야 한다.** `/admin/*`은 `ApiKeyScope.ADMIN`이다. 빠뜨리면 `main.py` 임포트 시점에 `RuntimeError`로 앱이 뜨지 않는다 — 이건 버그가 아니라 설계다. 표와 라우터는 항상 함께 움직인다.
+- **Admin 삭제 엔드포인트는 `IntegrityError`를 409 `HAS_DEPENDENTS`로 변환해야 한다.** 안 하면 catch-all에 걸려 500이 되고, Agent가 5xx를 재시도한다 (spec 7 마스터 데이터 절).
+- **비밀번호 설정·변경 엔드포인트를 만든다면 요청 스키마에서 72바이트를 막아야 한다.** bcrypt 5.x는 초과 시 자르지 않고 예외를 던지며, 한글은 24자만 넘어도 터진다.
+- **반응형 작업량이 Phase 4에서 2개 더 늘었다** (`/settings/api-keys`·`/developers`). 둘 다 넓은 표를 쓴다.
 
 ## 전 Phase 공통 미결
 
-- **반응형**: DESIGN.md의 744px 미만 햄버거·시트 붕괴가 미구현이다. 744px에서는 정상이나 375px에서 탭이 두 줄로 깨지고 우측 블록이 화면 밖으로 나간다. 데스크톱 데모 기준이라 의도적으로 넘겼고 뼈대가 하나도 없으므로 해당 Phase에서 처음부터 만들어야 한다. Phase 2에서 6개, Phase 3에서 3개(`/cards`·`/expenses`·`/expenses/[id]`)가 늘어 작업량이 그만큼 커졌다. 특히 정산 항목 테이블은 좁은 화면에서 가로 스크롤이나 카드 붕괴가 필요하다.
+- **반응형**: DESIGN.md의 744px 미만 햄버거·시트 붕괴가 미구현이다. 744px에서는 정상이나 375px에서 탭이 두 줄로 깨지고 우측 블록이 화면 밖으로 나간다. 데스크톱 데모 기준이라 의도적으로 넘겼고 뼈대가 하나도 없으므로 해당 Phase에서 처음부터 만들어야 한다. Phase 2에서 6개, Phase 3에서 3개(`/cards`·`/expenses`·`/expenses/[id]`), Phase 4에서 2개(`/settings/api-keys`·`/developers`)가 늘어 작업량이 그만큼 커졌다. 특히 정산 항목 테이블은 좁은 화면에서 가로 스크롤이나 카드 붕괴가 필요하다.
 - **비밀번호 길이**: bcrypt 5.x는 72바이트 초과 시 자르지 않고 예외를 던진다. 한글은 **24자만 넘어도** 터진다. 비밀번호 설정·변경 엔드포인트를 만들 때 요청 스키마에서 막아야 한다.
 - **운영 `JWT_SECRET`**: compose 기본값은 명백한 placeholder다. 배포 시 32바이트 이상 실제 값을 `.env`로 주입한다.
 - **`init-db`는 컬럼 변경을 반영하지 않는다.** Alembic을 쓰지 않으므로 스키마를 바꾸면 해당 테이블을 지우고 다시 돌려야 한다. 실제 운영 전환이 필요해지면 마이그레이션 도구 도입을 재검토한다.
