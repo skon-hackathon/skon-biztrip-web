@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import ExpenseReportStatus, TripStatus, UserRole
 from app.models import (
+    ApiKey,
     CardTransaction,
     Code,
     CodeGroup,
@@ -262,3 +263,31 @@ async def make_expense_item(
     session.add(item)
     await session.flush()
     return item
+
+
+async def make_api_key(
+    session: AsyncSession,
+    *,
+    user: User,
+    scopes: list[str] | None = None,
+    name: str = "테스트 키",
+    expires_at: datetime | None = None,
+    revoked_at: datetime | None = None,
+) -> tuple[str, ApiKey]:
+    """(평문, 행)을 돌려준다. 평문은 여기서만 얻을 수 있다 — DB에는 해시만 남는다."""
+    from app.services.api_keys import generate_key
+
+    raw, prefix, digest = generate_key()
+    key = ApiKey(
+        user_id=user.id,
+        name=name,
+        key_prefix=prefix,
+        key_hash=digest,
+        # StrEnum 멤버가 섞여 들어와도 ARRAY(String)에는 값 문자열로 저장되게 강제한다.
+        scopes=[str(scope) for scope in (scopes or [])],
+        expires_at=expires_at,
+        revoked_at=revoked_at,
+    )
+    session.add(key)
+    await session.flush()
+    return raw, key

@@ -84,3 +84,17 @@ async def test_make_trip_master_data_is_safe_on_a_seeded_session(seeded):
     터지고, 이후 모든 문장이 PendingRollbackError가 되어 원인이 묻힌다."""
     await make_trip_master_data(seeded)
     await make_trip_master_data(seeded)
+
+
+async def test_make_api_key_returns_raw_and_row(db_session):
+    from app.enums import ApiKeyScope
+    from app.services.api_keys import hash_key
+    from tests.factories import make_api_key, make_user
+
+    user = await make_user(db_session)
+    raw, key = await make_api_key(db_session, user=user, scopes=[ApiKeyScope.TRIPS_READ])
+
+    assert raw.startswith("sk_live_")
+    assert key.key_hash == hash_key(raw)
+    assert key.scopes == ["trips:read"]
+    assert key.revoked_at is None
