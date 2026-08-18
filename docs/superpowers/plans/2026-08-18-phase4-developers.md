@@ -426,6 +426,8 @@ def test_real_app_passes_the_completeness_guard():
     assert_scope_table_complete(real_app)  # 예외가 없으면 성공
 
 
+# probe 테스트는 자기 표를 넘긴다. 운영 표(33항목)와 비교하면 probe에 없는 항목이 전부
+# "라우트가 없는 표 항목"으로 잡혀 오탐이 난다.
 def test_guard_rejects_an_authenticated_route_missing_from_the_table():
     probe = FastAPI()
 
@@ -434,7 +436,7 @@ def test_guard_rejects_an_authenticated_route_missing_from_the_table():
         return {}
 
     with pytest.raises(RuntimeError) as exc:
-        assert_scope_table_complete(probe)
+        assert_scope_table_complete(probe, requirements={})
     assert "GET /api/v1/unlisted" in str(exc.value)
 
 
@@ -446,7 +448,23 @@ def test_guard_ignores_routes_that_do_not_authenticate():
     async def open_route():
         return {}
 
-    assert_scope_table_complete(probe)  # 예외 없음
+    assert_scope_table_complete(probe, requirements={})  # 예외 없음
+
+
+def test_guard_rejects_an_app_with_no_authenticated_routes():
+    """인증 라우트가 0개인데 표에 항목이 있으면 라우트 탐지가 깨진 것이다. 조용히 통과하면
+    전 엔드포인트가 스코프 검사 없이 뜬다 — 가장 큰 사고가 가장 조용한 형태로 지나간다."""
+    probe = FastAPI()
+
+    @probe.get("/api/v1/open")
+    async def open_route():
+        return {}
+
+    with pytest.raises(RuntimeError) as exc:
+        assert_scope_table_complete(
+            probe, requirements={("GET", "/api/v1/trips"): ApiKeyScope.TRIPS_READ}
+        )
+    assert "GET /api/v1/trips" in str(exc.value)
 
 
 def test_guard_rejects_a_table_entry_with_no_matching_route():
@@ -458,7 +476,13 @@ def test_guard_rejects_a_table_entry_with_no_matching_route():
         return {}
 
     with pytest.raises(RuntimeError) as exc:
-        assert_scope_table_complete(probe)
+        assert_scope_table_complete(
+            probe,
+            requirements={
+                ("GET", "/api/v1/auth/me"): None,
+                ("GET", "/api/v1/trips"): ApiKeyScope.TRIPS_READ,
+            },
+        )
     assert "GET /api/v1/trips" in str(exc.value)
 ```
 
@@ -481,15 +505,20 @@ def _authenticated_routes(app) -> set[tuple[str, str]]:
     한 겹 감싸서 붙는 경우가 있기 때문이다. 얕게만 보면 그런 라우트가 표 검사에서
     통째로 빠진다.
     """
-    from fastapi.routing import APIRoute
+    라우트 순회는 `iter_route_contexts`를 거친다 — fastapi 0.141에서 `include_router`로
+    등록한 라우트는 `app.routes`에 곧바로 `APIRoute`로 나타나지 않고 `_IncludedRouter`로
+    감싸여 있다. `isinstance(route, APIRoute)`로만 훑으면 **인증 라우트를 0개로 세고**,
+    그러면 표 검사가 통째로 무의미해진다.
+    """
+    from fastapi.routing import APIRoute, iter_route_contexts
 
     from app.deps import get_principal
 
     found: set[tuple[str, str]] = set()
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
+    for route_context in iter_route_contexts(app.routes):
+        if not isinstance(route_context.original_route, APIRoute):
             continue
-        stack = list(route.dependant.dependencies)
+        stack = list(route_context.dependant.dependencies)
         calls = set()
         while stack:
             dependency = stack.pop()
@@ -498,20 +527,29 @@ def _authenticated_routes(app) -> set[tuple[str, str]]:
             stack.extend(dependency.dependencies)
         if get_principal not in calls:
             continue
-        for method in route.methods - {"HEAD", "OPTIONS"}:
-            found.add((method, route.path))
+        for method in route_context.methods - {"HEAD", "OPTIONS"}:
+            found.add((method, route_context.path))
     return found
 
 
-def assert_scope_table_complete(app) -> None:
+def assert_scope_table_complete(
+    app,
+    # 테스트 probe가 자기 표를 넘길 수 있게 열어둔 인자다. 운영에서 검사를 약화시키라고
+    # 둔 것이 **아니다** — main.py는 인자 없이 부르고 기본값(전체 표)으로 검사한다.
+    requirements: dict[tuple[str, str], ApiKeyScope | None] | None = None,
+) -> None:
     """표와 실제 라우트가 정확히 일치하는지 임포트 시점에 확인한다.
 
     양방향으로 본다. 라우트가 표에 없으면 스코프 미선언이고, 표에 있는데 라우트가 없으면
     경로 변경 후 죽은 선언이 남은 것이다. 후자를 방치하면 다음 사람이 그 항목을 보고
     "이 경로는 보호되고 있다"고 잘못 믿는다.
+
+    인증 라우트가 0개여도 통과시키지 않는다. 표가 비어 있지 않은데 라우트가 0개면 그건
+    "검사할 게 없다"가 아니라 **라우트 탐지가 깨졌다**는 뜻이고, 조용히 통과시키면 전
+    엔드포인트가 스코프 검사 없이 뜬다. 가장 큰 사고가 가장 조용한 형태로 지나간다.
     """
     routes = _authenticated_routes(app)
-    declared = set(SCOPE_REQUIREMENTS)
+    declared = set(SCOPE_REQUIREMENTS if requirements is None else requirements)
     missing = routes - declared
     extra = declared - routes
     if missing or extra:
@@ -538,7 +576,7 @@ assert_scope_table_complete(app)
 - [ ] **Step 4: 통과를 확인한다**
 
 Run: `cd backend && uv run pytest tests/test_api_scopes.py -v`
-Expected: 13 passed
+Expected: 14 passed
 
 - [ ] **Step 5: mutation으로 가드를 검증한다**
 
@@ -564,7 +602,7 @@ Expected: 임포트/실행이 `RuntimeError: SCOPE_REQUIREMENTS가 실제 라우
 cd backend && git checkout app/services/api_scopes.py && uv run pytest tests/test_api_scopes.py -q
 ```
 
-Expected: 13 passed
+Expected: 14 passed
 
 - [ ] **Step 6: 커밋**
 
@@ -825,7 +863,7 @@ async def authenticate_key(session: AsyncSession, raw: str) -> tuple[User, list[
 - [ ] **Step 4: 통과를 확인한다**
 
 Run: `cd backend && uv run pytest tests/test_api_keys_service.py -v`
-Expected: 13 passed
+Expected: 14 passed
 
 - [ ] **Step 5: mutation으로 가드를 검증한다**
 
