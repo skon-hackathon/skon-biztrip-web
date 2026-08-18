@@ -196,45 +196,47 @@
 {:else if keys.length === 0}
 	<EmptyState title="발급된 키가 없습니다" description="위에서 첫 키를 발급하세요." />
 {:else}
-	<table class="mt-4 w-full border-collapse">
-		<thead>
-			<tr class="border-b border-hairline text-left text-caption text-muted">
-				<th class="py-3">이름</th>
-				<th class="py-3">키</th>
-				<th class="py-3">스코프</th>
-				<th class="py-3">상태</th>
-				<th class="py-3">마지막 사용</th>
-				<th class="py-3">만료</th>
-				<th class="py-3"></th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each keys as key (key.id)}
-				<tr class="border-b border-hairline">
-					<td class="py-3 text-body-sm text-ink">{key.name}</td>
-					<td class="py-3 font-mono text-body-sm text-muted">{key.key_prefix}…</td>
-					<td class="py-3 text-body-sm text-muted">{key.scopes.join(', ')}</td>
-					<td class="py-3">
-						<Badge tone={KEY_STATE_TONES[key.state]}>{KEY_STATE_LABELS[key.state]}</Badge>
-					</td>
-					<td class="py-3 text-body-sm text-muted">
-						{key.last_used_at ? formatDateTime(key.last_used_at) : '없음'}
-					</td>
-					<td class="py-3 text-body-sm text-muted">
-						{key.expires_at ? formatDateTime(key.expires_at) : '없음'}
-					</td>
-					<td class="py-3 text-right">
-						{#if key.state === 'ACTIVE'}
-							{#if confirmingId === key.id}
-								<Button variant="tertiary" onclick={() => revoke(key.id)}>정말 폐기</Button>
-								<Button variant="tertiary" onclick={() => (confirmingId = null)}>취소</Button>
-							{:else}
-								<Button variant="tertiary" onclick={() => (confirmingId = key.id)}>폐기</Button>
-							{/if}
-						{/if}
-					</td>
+	<div class="mt-4 overflow-x-auto">
+		<table class="w-full min-w-[860px] border-collapse">
+			<thead>
+				<tr class="border-b border-hairline text-left text-caption text-muted">
+					<th class="py-3">이름</th>
+					<th class="py-3">키</th>
+					<th class="py-3">스코프</th>
+					<th class="py-3">상태</th>
+					<th class="py-3">마지막 사용</th>
+					<th class="py-3">만료</th>
+					<th class="py-3"></th>
 				</tr>
-			{/each}
-		</tbody>
-	</table>
+			</thead>
+			<tbody>
+				{#each keys as key (key.id)}
+					<tr class="border-b border-hairline">
+						<td class="py-3 text-body-sm text-ink">{key.name}</td>
+						<td class="py-3 font-mono text-body-sm text-muted">{key.key_prefix}…</td>
+						<td class="py-3 text-body-sm text-muted">{key.scopes.join(', ')}</td>
+						<td class="py-3">
+							<Badge tone={KEY_STATE_TONES[key.state]}>{KEY_STATE_LABELS[key.state]}</Badge>
+						</td>
+						<td class="py-3 text-body-sm text-muted">
+							{key.last_used_at ? formatDateTime(key.last_used_at) : '없음'}
+						</td>
+						<td class="py-3 text-body-sm text-muted">
+							{key.expires_at ? formatDateTime(key.expires_at) : '없음'}
+						</td>
+						<td class="py-3 text-right">
+							{#if key.state === 'ACTIVE'}
+								{#if confirmingId === key.id}
+									<Button variant="tertiary" onclick={() => revoke(key.id)}>정말 폐기</Button>
+									<Button variant="tertiary" onclick={() => (confirmingId = null)}>취소</Button>
+								{:else}
+									<Button variant="tertiary" onclick={() => (confirmingId = key.id)}>폐기</Button>
+								{/if}
+							{/if}
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 {/if}
