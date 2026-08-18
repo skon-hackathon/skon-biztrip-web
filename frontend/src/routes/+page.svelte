@@ -72,11 +72,11 @@
 			<p class="mt-2 text-display-md">{loading ? '…' : `${waiting}건`}</p>
 		</Card>
 	</a>
-	<a href="/trips?status=COMPLETED" class="block">
+	<a href="/expenses" class="block">
 		<Card hoverable>
 			<p class="text-caption text-muted">미정산 출장</p>
 			<p class="mt-2 text-display-md">{loading ? '…' : `${unsettled}건`}</p>
-			<div class="mt-3"><Badge>정산은 Phase 3</Badge></div>
+			<div class="mt-3"><Badge>정산 진행</Badge></div>
 		</Card>
 	</a>
 </div>

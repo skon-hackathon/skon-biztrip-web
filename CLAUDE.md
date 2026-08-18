@@ -7,7 +7,7 @@ SK온 사내 출장시스템을 모사한 데모 웹. 실제 회계·전표 처�
 - Phase 현황·이월 항목: `docs/phase-status.md` — **새 Phase를 시작하기 전에 읽을 것.**
 - 디자인 규칙: `DESIGN.md`
 
-Phase 1(기반)·Phase 2(출장) 완료. 다음은 Phase 3(정산).
+Phase 1(기반)·Phase 2(출장)·Phase 3(정산) 완료. 다음은 Phase 4(개발자).
 
 ## 명령어
 
@@ -22,8 +22,8 @@ cd backend && uv run python -m app.cli init-db    # 스키마 + 없는 테이블
 cd backend && uv run python -m app.cli seed       # 데모 데이터 (멱등)
 
 # 테스트
-cd backend  && uv run pytest          # 293건
-cd frontend && npm test               # 45건
+cd backend  && uv run pytest          # 408건
+cd frontend && npm test               # 55건
 cd frontend && npm run check          # 타입체크, 0 errors / 0 warnings 유지
 
 # 배포 (3서비스 — DB는 스택 밖)
@@ -60,6 +60,12 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **상태 전이는 `assert_transition_allowed` 하나만 통과한다.** 적법성(`trip_status.py`)과 수행 주체(`trip_rules.py`의 `TRANSITION_ACTOR`)를 따로 부를 수 있게 열어두면 언젠가 한쪽만 부르고, 그 실패는 **fail-open**이다 — 출장을 볼 수 있는 결재자가 신청자 전용 전이를 통과한다. `services/trips.py`가 `assert_trip_transition`·`assert_trip_approver`를 직접 import하지 않는 것은 그래서다. 새 전이를 추가하면 `TRANSITION_ACTOR`에도 넣어야 하며, 빠뜨리면 import 시점에 `RuntimeError`로 죽는다.
 
+**정산서 전이도 `assert_expense_transition_allowed` 하나만 통과한다.** 출장과 같은 구조이며 이유도 같다 — 적법성(`EXPENSE_ALLOWED_TRANSITIONS`)과 주체(`EXPENSE_TRANSITION_ACTOR`)를 따로 부를 수 있게 열어두면 언젠가 한쪽만 부르고 그 실패는 fail-open이다. 전이를 추가하고 주체를 빠뜨리면 임포트 시점에 `RuntimeError`로 죽는다.
+
+**`COMPLETED → SETTLED`는 `settle_trip_for_report`만 수행한다.** 이 함수는 `assert_system_transition`(사용자 주체 전이를 거부하는 통로)을 지나고 `record_transition`을 남기며 **commit하지 않는다** — 정산서 승인과 같은 트랜잭션에서 끝나야 "정산은 승인됐는데 출장은 COMPLETED"인 상태가 생기지 않는다. 반대로 사용자 경로(`assert_transition_allowed`)는 이 전이를 계속 거부한다.
+
+**정산 합계는 서비스가 재계산한다.** `expense_report.total_amount_krw`는 비정규화 값이고 `is_excluded` 항목은 빼고 더한다(`_recalc_total`). 항목 상한(`MAX_ITEM_AMOUNT`)만으로는 항목 여러 개로 컬럼을 넘길 수 있으므로 합계 상한(`MAX_REPORT_TOTAL`)도 함께 본다. 자릿수는 `quantize(0.01)`로 고정해 응답 문자열 모양이 갈리지 않게 한다.
+
 **금액은 컬럼 상한까지 서비스가 막는다.** `Numeric(14, 2)`를 넘는 값을 통과시키면 flush에서 Postgres numeric overflow가 나고 catch-all 핸들러에 걸려 **500**이 된다. Agent는 5xx를 재시도하므로 절대 성공할 수 없는 요청에 재시도 루프가 걸린다. `trip_rules.MAX_ESTIMATED_COST`가 그 방어선이다.
 
 **`AsyncSession`을 `asyncio.gather`로 병렬 사용하지 않는다.** 같은 세션에 `execute`를 병렬로 걸면 `InvalidRequestError`가 난다. 여러 조회를 묶어야 하면 `IN` 절로 쿼리 수를 줄인다 (`services/codes.py`의 `validate_codes`가 그 예 — 그룹 수와 무관하게 쿼리 2개).
@@ -89,12 +95,12 @@ Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 
 
 ## 다음 Phase로 넘어간 항목
 
-`docs/phase-status.md`의 "Phase 2에서 넘어온 항목" 절을 **Phase 3 착수 전에** 읽을 것. 요약하면:
+`docs/phase-status.md`의 "Phase 3에서 넘어온 항목" 절을 **Phase 4 착수 전에** 읽을 것. 요약하면:
 
-- `load_active_codes`가 생산 호출부를 잃었고 `is_active` 규칙이 두 벌로 존재한다. 정리하거나 공용 헬퍼로 합친다.
-- `assert_fund_center`를 만들 때 `assert_center_code` 순수 함수를 함께 뽑는다.
-- `COMPLETED → SETTLED`는 `TRANSITION_ACTOR`에 `SYSTEM`으로 등록돼 있고 현재 모든 직접 호출이 `SYSTEM_TRANSITION_ONLY`로 막힌다. 정산서 승인이 이걸 어떻게 통과시킬지 먼저 정할 것.
-- 브라우저 수동 시나리오 8개가 미확인이다 (Phase 2 plan Task 29 Step 3).
+- `app/deps.py`가 JWT 인증에서 `request.state.scopes = UNRESTRICTED`(전용 센티널)를 넣는다. 스코프 검사기는 이 값을 **센티널과 동일성 비교**해야 한다. `getattr(request.state, "scopes", None)` 식으로 기본값을 두면 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는 fail-open이 된다.
+- 출장 상세가 정산서 존재 여부를 알기 위해 정산 목록을 `size=100`으로 훑는다. 정산서가 100건을 넘으면 놓친다.
+- 항목의 FC/CC override는 마스터 비활성화 시점에 재검증되지 않는다 (제출 시 헤더만 재검증).
+- 브라우저 수동 시나리오 14개가 미확인이다 (Phase 3 plan Task 24).
 
 ## 환경 주의
 

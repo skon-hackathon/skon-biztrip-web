@@ -131,3 +131,25 @@ async def test_seed_country_code_carries_currency_in_extra(db_session):
     ).scalar_one()
 
     assert us.extra["currency"] == "USD"
+
+
+async def test_every_settled_trip_has_an_expense_report(seeded):
+    """SETTLED는 정산서가 승인됐다는 뜻이다. 정산서 없는 SETTLED 출장은 모순이다."""
+    settled_ids = set(
+        (
+            await seeded.execute(select(Trip.id).where(Trip.status == TripStatus.SETTLED))
+        ).scalars()
+    )
+    reported_ids = set((await seeded.execute(select(ExpenseReport.trip_id))).scalars())
+    assert settled_ids <= reported_ids
+
+
+async def test_some_completed_trips_are_left_unsettled(seeded):
+    """미정산 데모와 정산서 생성 시나리오가 성립하려면 정산서 없는 COMPLETED가 남아야 한다."""
+    completed_ids = set(
+        (
+            await seeded.execute(select(Trip.id).where(Trip.status == TripStatus.COMPLETED))
+        ).scalars()
+    )
+    reported_ids = set((await seeded.execute(select(ExpenseReport.trip_id))).scalars())
+    assert completed_ids - reported_ids

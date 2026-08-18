@@ -58,6 +58,13 @@
 
 		<div class="flex items-center justify-self-end gap-4">
 			{#if auth.user}
+				<a
+					href="/cards"
+					aria-current={isActive('/cards') ? 'page' : undefined}
+					class="text-button-sm {isActive('/cards') ? 'text-ink' : 'text-muted hover:text-ink'}"
+				>
+					카드
+				</a>
 				{#if canApprove}
 					<a
 						href="/approvals"

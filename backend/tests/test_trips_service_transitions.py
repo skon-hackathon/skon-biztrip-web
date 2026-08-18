@@ -3,12 +3,13 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy import select
 
-from app.enums import ActivityAction, NotificationType, TripStatus
+from app.enums import ActivityAction, EntityType, NotificationType, TripStatus
 from app.errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from app.models import ActivityLog, Notification
 from app.schemas.trip import RejectRequest
 from app.services.trips import (
     approve_trip,
+    settle_trip_for_report,
     complete_trip,
     list_timeline,
     reject_trip,
@@ -286,3 +287,79 @@ async def test_full_reject_reopen_resubmit_cycle(db_session):
     assert detail.status is TripStatus.SUBMITTED
     assert detail.reject_reason is None
     assert detail.approver_id == manager.id
+
+
+async def test_settle_trip_for_report_moves_completed_to_settled(db_session):
+    manager, employee = await _pair(db_session)
+    trip = await make_trip(
+        db_session, user=employee, status=TripStatus.COMPLETED, approver_id=manager.id
+    )
+
+    await settle_trip_for_report(
+        db_session, trip=trip, actor_id=manager.id, report_no="EX-9999-0001"
+    )
+
+    assert trip.status is TripStatus.SETTLED
+
+
+async def test_settle_trip_for_report_records_the_trip_timeline(db_session):
+    """출장 쪽 이력이 비면 타임라인이 COMPLETED에서 끊긴다."""
+    manager, employee = await _pair(db_session)
+    trip = await make_trip(
+        db_session, user=employee, status=TripStatus.COMPLETED, approver_id=manager.id
+    )
+    await settle_trip_for_report(
+        db_session, trip=trip, actor_id=manager.id, report_no="EX-9999-0002"
+    )
+
+    rows = (
+        (
+            await db_session.execute(
+                select(ActivityLog).where(
+                    ActivityLog.entity_type == EntityType.TRIP,
+                    ActivityLog.entity_id == trip.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    settled = [row for row in rows if row.to_status == TripStatus.SETTLED.value]
+    assert len(settled) == 1
+    assert settled[0].from_status == TripStatus.COMPLETED.value
+    assert settled[0].action is ActivityAction.SETTLED
+    assert "EX-9999-0002" in settled[0].memo
+
+
+async def test_settle_trip_for_report_rejects_a_trip_that_is_not_completed(db_session):
+    manager, employee = await _pair(db_session)
+    trip = await make_trip(
+        db_session, user=employee, status=TripStatus.APPROVED, approver_id=manager.id
+    )
+    with pytest.raises(ConflictError) as exc_info:
+        await settle_trip_for_report(
+            db_session, trip=trip, actor_id=manager.id, report_no="EX-9999-0003"
+        )
+    assert exc_info.value.code == "TRIP_INVALID_TRANSITION"
+    assert trip.status is TripStatus.APPROVED
+
+
+async def test_settle_trip_for_report_does_not_notify(db_session):
+    """알림은 정산서 쪽에서 EXPENSE_APPROVED 하나만 보낸다."""
+    manager, employee = await _pair(db_session)
+    trip = await make_trip(
+        db_session, user=employee, status=TripStatus.COMPLETED, approver_id=manager.id
+    )
+    await settle_trip_for_report(
+        db_session, trip=trip, actor_id=manager.id, report_no="EX-9999-0004"
+    )
+    rows = (
+        (
+            await db_session.execute(
+                select(Notification).where(Notification.user_id == employee.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows == []

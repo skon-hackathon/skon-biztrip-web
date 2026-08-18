@@ -12,6 +12,7 @@
 		reopenTrip,
 		submitTrip
 	} from '$lib/api/trips';
+	import { createExpense, listExpenses } from '$lib/api/expenses';
 	import type { TimelineEntry, TripDetail } from '$lib/api/types';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
@@ -29,6 +30,7 @@
 	let busy = $state(false);
 	let rejecting = $state(false);
 	let rejectReason = $state('');
+	let reportId = $state<number | null>(null);
 
 	const tripId = $derived(Number(page.params.id));
 	const isOwner = $derived(!!trip && trip.user_id === auth.user?.id);
@@ -44,10 +46,35 @@
 		errorMessage = '';
 		try {
 			[trip, entries] = await Promise.all([getTrip(id), getTimeline(id)]);
+			void loadReport(id);
 		} catch (error) {
 			errorMessage = error instanceof ApiError ? error.message : '출장을 불러오지 못했습니다';
 		} finally {
 			loading = false;
+		}
+	}
+
+	// 출장 상세에서 정산서 존재 여부를 알려면 목록을 한 번 봐야 한다. 전용
+	// GET /trips/{id}/expense 엔드포인트를 만들지 않은 것은 목록 필터로 충분하기 때문이다.
+	async function loadReport(id: number): Promise<void> {
+		try {
+			const reports = await listExpenses({ size: 100 });
+			reportId = reports.items.find((item) => item.trip_id === id)?.id ?? null;
+		} catch {
+			reportId = null;
+		}
+	}
+
+	async function startExpense(): Promise<void> {
+		if (busy) return;
+		busy = true;
+		actionError = '';
+		try {
+			const created = await createExpense(tripId);
+			await goto(`/expenses/${created.id}`);
+		} catch (error) {
+			actionError = error instanceof ApiError ? error.message : '정산서를 만들지 못했습니다';
+			busy = false;
 		}
 	}
 
@@ -207,8 +234,21 @@
 						{/if}
 					{/if}
 
-					{#if trip.status === 'COMPLETED' || trip.status === 'SETTLED'}
-						<p class="text-body-sm text-muted">정산은 Phase 3에서 연결됩니다.</p>
+					{#if isOwner && (trip.status === 'APPROVED' || trip.status === 'COMPLETED' || trip.status === 'SETTLED')}
+						{#if reportId !== null}
+							<Button
+								full
+								variant="secondary"
+								disabled={busy}
+								onclick={() => goto(`/expenses/${reportId}`)}
+							>
+								정산서 보기
+							</Button>
+						{:else}
+							<Button full variant="secondary" disabled={busy} onclick={startExpense}>
+								정산서 작성
+							</Button>
+						{/if}
 					{/if}
 				</div>
 			</Card>

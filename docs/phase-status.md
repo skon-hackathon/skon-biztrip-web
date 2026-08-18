@@ -1,19 +1,20 @@
 # Phase 현황 — 완료분과 다음 작업
 
-- 기준: Phase 2 (출장) 완료 시점
+- 기준: Phase 3 (정산) 완료 시점
 - 설계: [`superpowers/specs/2026-08-12-skon-biztrip-web-design.md`](superpowers/specs/2026-08-12-skon-biztrip-web-design.md)
 - Phase 1 계획: [`superpowers/plans/2026-08-12-phase1-foundation.md`](superpowers/plans/2026-08-12-phase1-foundation.md)
 - Phase 2 계획: [`superpowers/plans/2026-08-17-phase2-trips.md`](superpowers/plans/2026-08-17-phase2-trips.md)
+- Phase 3 계획: [`superpowers/plans/2026-08-18-phase3-expenses.md`](superpowers/plans/2026-08-18-phase3-expenses.md)
 
 | Phase | 범위 | 상태 |
 |---|---|---|
 | 1 | 기반 — 스키마·인증·SPA 골격·배포 | 완료 |
-| 2 | 출장 — 신청·목록·상세·수정·결재·타임라인·알림 | **완료** |
-| 3 | 정산 — 카드내역·자동매칭·정산서·FC/CC | 다음 |
-| 4 | 개발자 — API Key·스코프·`/developers` 가이드 | 대기 |
+| 2 | 출장 — 신청·목록·상세·수정·결재·타임라인·알림 | 완료 |
+| 3 | 정산 — 카드내역·자동매칭·정산서·FC/CC | **완료** |
+| 4 | 개발자 — API Key·스코프·`/developers` 가이드 | 다음 |
 | 5 | 운영 — Admin CRUD, 반응형, 배포 검증 | 대기 |
 
-**테스트**: 백엔드 293건 · 프론트 45건 · 타입체크 0 errors / 0 warnings · 빌드 성공
+**테스트**: 백엔드 408건 · 프론트 55건 · 타입체크 0 errors / 0 warnings · 빌드 성공
 
 ---
 
@@ -107,67 +108,124 @@ curl로 `BT-2026-0041` 생성 → 상신 → 결재자(김연구) 알림 도착 
 
 ---
 
-## Phase 3 — 정산
+## Phase 3 — 완료
 
-### 범위
+25개 태스크. Task 1–2는 구현 subagent + 독립 스펙 리뷰로, 나머지는 인라인 구현 + 태스크별 mutation 검증으로 진행했다(예산 한도로 subagent 경로 중단).
 
-카드내역, 자동매칭, 정산서 작성·제출·결재, Fund Center / Cost Center 계층.
+### 백엔드 — 서비스 계층
 
-**라우트**: `/cards` `/expenses` `/expenses/[id]`
+| 모듈 | 책임 |
+|---|---|
+| `services/matching.py` | 자동매칭 순수 함수 — 창(±1일)·취소·잠금 판정 + 매칭 사유 문자열 + 비목 추천. DB 접근 없음. 날짜는 KST 기준 |
+| `services/expense_rules.py` | 정산 순수 규칙 + `EXPENSE_ALLOWED_TRANSITIONS`/`EXPENSE_TRANSITION_ACTOR` 표 + 임포트 시점 소진 가드 + `assert_expense_transition_allowed` |
+| `services/expenses.py` | 정산서 조회·목록·생성·헤더수정·항목 CRUD·매칭후보·전이 4종·타임라인 |
+| `services/cards.py` | 내 법인카드·카드거래 조회 (소유자 필터는 서비스가 건다) |
+| `services/centers.py` | `assert_center_code` 순수 함수 추출, `assert_fund_center` 추가 |
+| `services/trips.py` | `settle_trip_for_report` 추가 — commit하지 않는 시스템 전이 |
+| `services/trip_rules.py` | `assert_system_transition` 추가 — 사용자 주체 전이를 거부하는 통로 |
 
-**API**:
+### 백엔드 — API
 
 ```
-GET    /api/v1/cards  ·  /api/v1/card-transactions
-GET    /api/v1/expenses  ·  POST /api/v1/expenses          (trip_id로 생성)
-GET    /api/v1/expenses/{id}
-GET    /api/v1/expenses/{id}/match-candidates              ← 자동매칭 후보 + 사유
-POST   /api/v1/expenses/{id}/items
-PATCH|DELETE /api/v1/expense-items/{id}
-POST   /api/v1/expenses/{id}/submit | approve | reject
+GET              /api/v1/cards  ·  /api/v1/card-transactions
+GET|POST         /api/v1/expenses
+GET|PATCH        /api/v1/expenses/{id}
+GET              /api/v1/expenses/{id}/match-candidates  ·  /timeline
+POST             /api/v1/expenses/{id}/items
+PATCH|DELETE     /api/v1/expense-items/{id}
+POST             /api/v1/expenses/{id}/submit | approve | reject | reopen
 ```
 
-### 핵심 작업
+정산 목록 필터: `scope`(mine·approvals·all) · `status`(반복 파라미터) · `q` · `page` · `size`
+카드거래 필터: `card_id` · `approved_from` · `approved_to` · `merchant_category_code` · `q` · `include_cancelled` · `page` · `size`
 
-**자동매칭 (`services/matching.py`)** — DB 접근 없는 순수 함수로 구현한다. 입력은 trip + 거래 리스트. 후보 조건:
+### 프론트엔드
 
-- 해당 사용자 카드의 거래
-- `approved_at`이 `start_date - 1일 ~ end_date + 1일` 범위
-- `is_cancelled = false`
-- 다른 제출완료(`SUBMITTED` 이상) 리포트에 포함되지 않았을 것
+| 항목 | 내용 |
+|---|---|
+| 화면 | `/cards` `/expenses` `/expenses/[id]` + 출장 상세의 정산 진입 + 대시보드 미정산 카드 연결 |
+| 컴포넌트 | `ExpenseStatusBadge` `CardTransactionTable` `MatchPanel` `ExpenseItemsTable` |
+| 데이터 계층 | `api/query.ts`(공용 쿼리스트링 빌더, `tripQueryString`도 여기로 위임) · `api/cards.ts` · `api/expenses.ts` · `lib/expenses.ts`(상태 라벨·`resolveCenter`·`sumIncluded`) |
 
-각 후보에 매칭 사유 문자열(`출장기간 내 승인`, `출발 전일 교통비` 등)을 붙여 UI와 API 양쪽에 동일하게 노출한다.
+DESIGN.md 매핑: `reservation-card` → 정산서 우측 sticky 액션 카드, `rating-display`(64px = `text-display-xl`) → 정산 총액.
 
-**FC/CC 계층** — `expense_report`가 기본값을 갖고 `expense_item`의 FC/CC는 nullable override다. 비어 있으면 리포트 값을 사용한다(`coalesce`). `cost_center_code`는 출장에서 정산서로 승계되며 수정 가능하다. 정산서 제출 시 FC/CC가 비어 있으면 검증 실패다.
+### 확정한 설계 결정
 
-**정산서 생성 제약** — `trip.status`가 `APPROVED` 또는 `COMPLETED`일 때만 생성 가능하고 `trip_id`가 uniq다(출장당 1건). 그 외 상태에서 시도하면 409.
+| 쟁점 | 결정 |
+|---|---|
+| `COMPLETED → SETTLED` 통로 | `assert_system_transition` 신설. 같은 `TRANSITION_ACTOR` 표를 읽고 양방향 fail-closed — 사용자 경로는 SYSTEM 전이를, 시스템 경로는 OWNER/APPROVER 전이를 거부 |
+| 출장 이력 | `settle_trip_for_report`가 `record_transition`을 통과하고 commit하지 않는다 (정산 승인과 한 트랜잭션) |
+| 반려 흐름 | `REJECTED` 후 `reopen`으로 DRAFT 복귀 (출장과 대칭). spec 5.5의 "반려 시 DRAFT" 문구보다 반려 사유 표시를 우선 |
+| 제출 시 출장 상태 | 생성은 APPROVED·COMPLETED, **제출은 COMPLETED만**. 아니면 승인 시점에 전이표에 없는 `APPROVED → SETTLED`가 필요해진다 |
+| `ActivityAction` | 정산 전용 멤버를 추가하지 않고 `entity_type=EXPENSE_REPORT`로 구분 |
+| 승인 알림 | 정산서 쪽 `EXPENSE_APPROVED` 하나만. 출장 SETTLED는 activity_log만 남긴다 |
+| 금액 상한 | 항목(`MAX_ITEM_AMOUNT`)과 합계(`MAX_REPORT_TOTAL`) 둘 다 서비스가 막는다 |
+| 매칭 날짜 | `approved_at`을 KST로 변환해 비교 |
 
-**`COMPLETED → SETTLED` 전이 연결** — `TRANSITION_ACTOR`에 `SYSTEM`으로 등록돼 있고 현재 모든 직접 호출을 `SYSTEM_TRANSITION_ONLY`로 막는다. 정산서가 `APPROVED`로 갈 때 서비스가 이 전이를 수행해야 하며, **반드시 `record_transition`을 통과시킨다** — 출장 쪽 이력이 비면 타임라인이 끊긴다. 시스템 전이를 어떻게 통과시킬지(전용 함수 추가 vs `assert_transition_allowed` 우회 경로)를 먼저 정하고 시작할 것.
+### 설계에서 벗어난 결정
 
-### Phase 2에서 넘어온 항목
+- **`PATCH /expenses/{id}` 추가.** spec 7 목록에 없지만 spec 5.5가 "cost_center_code는 승계되며 수정 가능"과 "제출 시 FC/CC 필수"를 동시에 요구한다. 헤더를 고칠 경로가 없으면 FC가 빈 정산서는 영원히 제출 불가다.
+- **`POST /expenses/{id}/reopen` 추가.** 출장의 reopen과 같은 이유.
+- **`GET /expenses/{id}/timeline` 추가.** 쓰기만 하고 아무도 읽지 않는 `activity_log`가 되지 않도록.
+- **`POST /items`·`PATCH|DELETE /expense-items/{id}`가 갱신된 정산서를 돌려준다.** 합계와 항목이 함께 바뀌므로 재조회 왕복을 없앤다.
 
-**서비스 계층 정리 — Phase 3 착수 전에**
+### 시드 결함 수정
 
-- **`load_active_codes`의 생산 호출부가 사라졌다.** `validate_codes` 도입 이후 이 함수를 부르는 것은 테스트뿐이다. 그런데 "그룹 부재 vs 활성 코드 0개" 규칙과 `is_active` 필터 2개가 이제 두 벌의 쿼리 구현에 각각 들어 있어, 의미를 바꾸려면 두 곳을 다 찾아야 한다. 둘 중 하나를 택한다 — (a) `load_active_codes`와 딸린 테스트 3건 삭제, (b) 두 함수를 `_load_active_codes_by_group(session, group_codes) -> dict[str, set[str]]` 하나 위에 얹기.
-- **그때 `load_active_codes`의 주석도 고친다.** "join은 두 경우를 구분하지 못한다"고 적혀 있으나 이는 **inner** join에만 참이다. LEFT OUTER JOIN은 구분할 수 있다(그룹 없음 → 행 없음, 코드 0개 → `(group, NULL)`). 지금 구조를 바꿀 이유는 없지만 저 문장은 언젠가 누군가를 오도한다.
-- **`assert_fund_center`가 없다.** `services/centers.py`에 코스트센터 검증만 있다. 정산서 쓰기 경로가 첫 사용처다. **그때 순수 함수를 뽑는다** — 지금 `assert_cost_center`는 쿼리·멤버십 검사·예외 발생이 한 함수에 붙어 있어 두 줄짜리 순수 검사에 `db_session`이 필요하다. `assert_fund_center`가 `if code not in allowed: raise` 블록을 복사하려는 순간이 `assert_center_code(code, allowed, *, field)`를 뽑을 시점이다.
-- **`GET /fund-centers`는 만들어만 뒀다.** Phase 2에서 화면이 쓰지 않는다. 정산서 헤더의 FC 셀렉트가 첫 사용처다.
-- **`ActivityAction`에 정산 액션이 없다.** 현재 enum은 출장 기준이다. 정산서 전이도 같은 `activity_log`를 쓰되 `entity_type=EXPENSE_REPORT`로 구분한다. 새 액션 멤버가 필요한지 Phase 3에서 판단한다.
+정산서를 COMPLETED 출장부터 채우던 탓에 **SETTLED 출장 일부가 정산서 없이** 남았다. SETTLED는 정산서가 승인됐다는 뜻이므로 상태 정의와 모순이고, 정산서 생성 시나리오도 막혔다. SETTLED를 먼저 채우고 남는 자리를 COMPLETED로 메우도록 고쳤다(정산서 12건은 그대로). 두 규칙을 `test_seed.py`가 지킨다.
+
+**주의**: 이 수정은 시드 코드의 문제이므로 **이미 적재된 운영 DB에는 반영되지 않는다**(시드는 멱등이라 기존 행을 고치지 않는다). 필요하면 `expense_report`·`expense_item`·`trip`을 지우고 다시 시드해야 한다.
+
+### 실서버 검증 완료
+
+curl로 Agent 경로를 그대로 밟았다: `BT-2026-0020` 완료 처리 → 정산서 `EX-2026-0013` 생성(코스트센터 CC2100 승계) → 항목 추가 → FC 지정 → 제출 → 결재자(김연구) 결재함 노출 → 승인 → **출장이 SETTLED로 자동 전이** → 출장 타임라인 `COMPLETED·SETTLED`, 정산 타임라인 `CREATED·UPDATED·SUBMITTED·APPROVED`, 신청자에게 `EXPENSE_APPROVED` 알림.
+
+자동매칭 실측(`BT-2026-0030`): 후보 6건, 사유 `출장기간 내 승인` 5건 + `종료 익일 승인` 1건, 비목 추천 `TRANSPORT`/`MEAL`/`LODGING`.
+
+에러 계약 실측: 항목 없이 제출 409 `EXPENSE_NO_ITEMS` · FC 없이 제출 400 `CENTER_REQUIRED`+`field` · 신청자의 승인 시도 403 `NOT_EXPENSE_APPROVER` · 중복 승인 409 `EXPENSE_INVALID_TRANSITION` · 승인 후 항목 수정 409 `EXPENSE_NOT_EDITABLE` · 타인 정산서 404 `EXPENSE_NOT_FOUND`.
+
+### Phase 3에서 처리한 이월 항목
+
+- `load_active_codes` 삭제. "그룹 부재 vs 활성 코드 0개" 규칙은 `validate_codes` 테스트가 `field`까지 포함해 지킨다.
+- `assert_center_code` 순수 함수 추출 + `assert_fund_center` 추가. 멤버십 검사가 한 곳뿐이다.
+- `GET /fund-centers`가 첫 소비처(정산서 헤더 FC 셀렉트)를 얻었다.
+- `COMPLETED → SETTLED` 연결 완료.
+- `ActivityAction`은 그대로 두기로 결정.
+
+### mutation 검증 목록
+
+가드를 넣을 때마다 그 줄을 망가뜨려 테스트가 실제로 깨지는지 확인했다.
+
+| 가드 | 깨진 테스트 |
+|---|---|
+| `assert_center_code`의 멤버십 검사 | 7건 |
+| `assert_system_transition`의 SYSTEM 검사 | 2건 |
+| `matching`의 취소·잠금 필터, `WINDOW_DAYS` | 각 1–2건 |
+| `EXPENSE_TRANSITION_ACTOR` 엔트리 삭제 | 임포트 시점 `RuntimeError` |
+| `assert_report_total`, `sum_included`의 제외 처리 | 각 1건 |
+| 카드거래 소유자 필터 | 1건 |
+| `assert_report_creatable` · `assert_trip_owner`(정산서 생성) | 각 1건 |
+| `assert_item_amount`, 거래 소유자 조건, 합계 재계산 | 각 1건 |
+| 매칭 잠금 상태 집합(DRAFT 포함), 자기 리포트 제외 조건 | 각 1건 |
+| `assert_trip_completed` · `assert_has_items` · `assert_centers_present` · `settle_trip_for_report` 호출 | 각 1–3건 |
+
+---
+
+## Phase 3에서 넘어온 항목
 
 **UI**
 
-- **브라우저 시나리오 8개 미확인.** 딥링크 보존, 중복 제출 가드, 반려→재작성→재상신 UI, 전역 401 정리. 코드와 단위테스트로는 덮여 있으나 실브라우저로 눌러보지 않았다. 절차는 Phase 2 계획 Task 29 Step 3에 있다.
-- **알림 뱃지는 라우트 변경 시에만 갱신된다.** 같은 화면에 머무는 동안 새 알림이 오면 보이지 않는다. 폴링·SSE는 데모 범위 밖이라 하지 않았다.
-- **대시보드가 집계를 위해 목록 API를 4번 부른다.** `size=1`이라 비용은 작지만 카드가 더 늘면 전용 요약 엔드포인트가 낫다.
-- **새 폼마다 중복 제출 가드** (`if (submitting) return;`). 정산서 제출도 멱등하지 않다.
+- **브라우저 수동 시나리오 14개 미확인.** Phase 2 이월 8개(딥링크·중복 제출·반려 재작성·전역 401 등) + Phase 3 신규 6개(카드 필터, 정산서 생성·승계, 담기, 부서 상속 토글, FC 누락 제출, 승인 후 출장 SETTLED 확인). 절차는 Phase 3 계획 Task 24에 있다.
+- **출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다.** 데모 규모에서는 충분하지만 정산서가 100건을 넘으면 놓친다. `trip_id` 필터나 전용 조회가 필요하다.
+- **알림 뱃지는 여전히 라우트 변경 시에만 갱신된다.** 폴링·SSE는 데모 범위 밖.
+- **대시보드 집계는 여전히 목록 API 4회 호출이다.**
 
-**기타**
+**백엔드**
 
-- **`q` 필터는 LIKE 와일드카드를 이스케이프하지 않는다.** 사용자가 `%`를 넣으면 검색 범위가 넓어질 뿐이지만, 정확도가 중요한 검색을 만들면 그때 처리한다.
-- **출장번호 채번은 `max() + 1`이다.** 단일 인스턴스 전제. `trip_no` unique 제약이 마지막 방어선이다(그 경우 500). 멀티 레플리카로 가면 시퀀스나 advisory lock이 필요하다.
-- **`restore()`/`clear()` 경합은 여전히 도달 불가.** `AppShell`은 `auth.user`가 non-null일 때만 마운트된다. "세션 갱신" 같은 호출이 생기면 그때 정리한다.
-
----
+- **항목의 FC/CC override는 제출 시 재검증되지 않는다.** 제출은 헤더 FC/CC만 마스터와 대조한다. 항목 override 후 그 센터가 비활성화되면 통과한다.
+- **정산 목록의 `q`도 LIKE 와일드카드를 이스케이프하지 않는다** (출장과 같은 판단).
+- **`next_report_no`도 `max() + 1`이다.** 멀티 레플리카로 가면 `next_trip_no`와 함께 시퀀스나 advisory lock으로 옮긴다.
+- **매칭 후보 조회는 페이징이 없다.** 출장 기간 ±2일이라 건수가 작지만, 장기 출장에서는 커질 수 있다.
+- **운영 DB의 기존 시드 데이터는 옛 배정 규칙 그대로다** (위 "시드 결함 수정" 참조).
 
 ## 이후 Phase
 
@@ -180,7 +238,7 @@ POST   /api/v1/expenses/{id}/submit | approve | reject
 
 ## 전 Phase 공통 미결
 
-- **반응형**: DESIGN.md의 744px 미만 햄버거·시트 붕괴가 미구현이다. 744px에서는 정상이나 375px에서 탭이 두 줄로 깨지고 우측 블록이 화면 밖으로 나간다. 데스크톱 데모 기준이라 의도적으로 넘겼고 뼈대가 하나도 없으므로 해당 Phase에서 처음부터 만들어야 한다. Phase 2에서 화면이 6개 늘어 작업량이 그만큼 커졌다.
+- **반응형**: DESIGN.md의 744px 미만 햄버거·시트 붕괴가 미구현이다. 744px에서는 정상이나 375px에서 탭이 두 줄로 깨지고 우측 블록이 화면 밖으로 나간다. 데스크톱 데모 기준이라 의도적으로 넘겼고 뼈대가 하나도 없으므로 해당 Phase에서 처음부터 만들어야 한다. Phase 2에서 6개, Phase 3에서 3개(`/cards`·`/expenses`·`/expenses/[id]`)가 늘어 작업량이 그만큼 커졌다. 특히 정산 항목 테이블은 좁은 화면에서 가로 스크롤이나 카드 붕괴가 필요하다.
 - **비밀번호 길이**: bcrypt 5.x는 72바이트 초과 시 자르지 않고 예외를 던진다. 한글은 **24자만 넘어도** 터진다. 비밀번호 설정·변경 엔드포인트를 만들 때 요청 스키마에서 막아야 한다.
 - **운영 `JWT_SECRET`**: compose 기본값은 명백한 placeholder다. 배포 시 32바이트 이상 실제 값을 `.env`로 주입한다.
 - **`init-db`는 컬럼 변경을 반영하지 않는다.** Alembic을 쓰지 않으므로 스키마를 바꾸면 해당 테이블을 지우고 다시 돌려야 한다. 실제 운영 전환이 필요해지면 마이그레이션 도구 도입을 재검토한다.

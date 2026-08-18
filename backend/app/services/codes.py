@@ -23,34 +23,11 @@ def assert_valid_code(
         )
 
 
-async def load_active_codes(session: AsyncSession, group_code: str) -> set[str]:
-    """엔티티 대신 id 컬럼만 선택한다 — CodeGroup을 select하면 ORM 객체가 만들어지며
-    lazy="selectin"인 CodeGroup.codes가 즉시 로드되어 불필요한 세 번째 쿼리가 발생한다.
-    쿼리 두 개 구조는 하나의 join으로 합칠 수 없다: join은 "코드그룹이 없거나 비활성"
-    (UNKNOWN_CODE_GROUP을 던져야 함)과 "그룹은 존재하지만 활성 코드가 0개"(빈 set()을
-    반환해야 함)를 구분하지 못한다."""
-    group_id = (
-        await session.execute(
-            select(CodeGroup.id).where(
-                CodeGroup.group_code == group_code,
-                CodeGroup.is_active.is_(True),
-            )
-        )
-    ).scalar_one_or_none()
-    if group_id is None:
-        raise ValidationError("UNKNOWN_CODE_GROUP", f"존재하지 않는 코드그룹입니다: {group_code}")
-
-    rows = await session.execute(
-        select(Code.code).where(Code.group_id == group_id, Code.is_active.is_(True))
-    )
-    return set(rows.scalars().all())
-
-
 async def validate_codes(session: AsyncSession, specs: Sequence[CodeSpec]) -> None:
     """여러 코드값을 한 번에 검증한다.
 
-    호출부가 `load_active_codes` + `assert_valid_code`를 필드 수만큼 반복하면 그룹명과
-    field 문자열을 잘못 짝짓기 쉽다. 그 실수를 구조적으로 막는 것이 이 함수의 목적이다.
+    호출부가 그룹별 활성 코드를 조회해서 `assert_valid_code`를 필드 수만큼 반복하면
+    그룹명과 field 문자열을 잘못 짝짓기 쉽다. 그 실수를 구조적으로 막는 것이 이 함수의 목적이다.
 
     `asyncio.gather`로 병렬화하지 않는다 — AsyncSession은 동시 사용이 금지돼 있어
     같은 세션에 execute를 병렬로 걸면 InvalidRequestError가 난다. 대신 그룹 수와
