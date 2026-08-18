@@ -93,3 +93,47 @@ async def test_empty_scope_key_is_not_unrestricted(client, db_session, seeded):
     raw, _ = await make_api_key(db_session, user=user, scopes=[])
     response = await client.get("/api/v1/trips", headers={"X-API-Key": raw})
     assert response.status_code == 403
+
+
+async def test_jwt_only_dependency_rejects_api_keys(db_session):
+    """의존성 단위 테스트. 라우터는 Task 10에서 붙는다."""
+    import pytest
+    from fastapi import Request
+
+    from app.deps import get_jwt_principal
+    from app.errors import ForbiddenError
+
+    request = Request({"type": "http", "method": "GET", "headers": [], "path": "/"})
+    request.state.auth_method = "api_key"
+    user = await make_user(db_session)
+
+    with pytest.raises(ForbiddenError) as exc:
+        await get_jwt_principal(request, user)
+    assert exc.value.code == "API_KEY_FORBIDDEN"
+
+
+async def test_jwt_only_dependency_accepts_jwt(db_session):
+    from fastapi import Request
+
+    from app.deps import get_jwt_principal
+
+    request = Request({"type": "http", "method": "GET", "headers": [], "path": "/"})
+    request.state.auth_method = "jwt"
+    user = await make_user(db_session)
+
+    assert await get_jwt_principal(request, user) is user
+
+
+async def test_jwt_only_dependency_rejects_unknown_auth_method(db_session):
+    """auth_method가 없으면 거부한다 — 모르면 막는 쪽이 기본값이다."""
+    import pytest
+    from fastapi import Request
+
+    from app.deps import get_jwt_principal
+    from app.errors import ForbiddenError
+
+    request = Request({"type": "http", "method": "GET", "headers": [], "path": "/"})
+    user = await make_user(db_session)
+
+    with pytest.raises(ForbiddenError):
+        await get_jwt_principal(request, user)

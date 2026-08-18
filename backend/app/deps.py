@@ -101,3 +101,21 @@ def require_role(*roles: str):
         return user
 
     return checker
+
+
+async def get_jwt_principal(request: Request, user: CurrentUser) -> User:
+    """로그인 세션(JWT)에서만 허용하는 엔드포인트용.
+
+    API Key로 새 API Key를 만들 수 있으면 스코프 제한이 통째로 무의미해진다 —
+    `cards:read` 키 하나로 전권 키를 찍어낼 수 있게 된다. 그래서 키 관리 API는
+    사람이 로그인한 세션에서만 열린다.
+
+    `get_principal`을 거쳐 오므로 스코프 표 소진 가드도 이 라우트를 함께 검사한다.
+    auth_method가 없으면(=예상 못 한 경로) 통과가 아니라 거부다.
+    """
+    if getattr(request.state, "auth_method", None) != "jwt":
+        raise ForbiddenError("API_KEY_FORBIDDEN", "이 작업은 로그인 세션에서만 가능합니다")
+    return user
+
+
+JwtOnlyUser = Annotated[User, Depends(get_jwt_principal)]
