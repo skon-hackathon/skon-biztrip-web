@@ -11,7 +11,7 @@ from datetime import date
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Trip
+from app.models import ExpenseReport, Trip
 
 
 async def next_trip_no(session: AsyncSession, today: date) -> str:
@@ -26,6 +26,24 @@ async def next_trip_no(session: AsyncSession, today: date) -> str:
     last = (
         await session.execute(
             select(func.max(Trip.trip_no)).where(Trip.trip_no.like(f"{prefix}%"))
+        )
+    ).scalar_one_or_none()
+    sequence = int(last[len(prefix) :]) + 1 if last else 1
+    return f"{prefix}{sequence:04d}"
+
+
+async def next_report_no(session: AsyncSession, today: date) -> str:
+    """`EX-YYYY-NNNN`. 연도별로 0001부터 다시 센다.
+
+    `next_trip_no`와 같은 max() + 1 방식이고 같은 한계를 갖는다 — 단일 인스턴스 전제,
+    마지막 방어선은 `expense_report.report_no`의 unique 제약이다.
+    """
+    prefix = f"EX-{today.year}-"
+    last = (
+        await session.execute(
+            select(func.max(ExpenseReport.report_no)).where(
+                ExpenseReport.report_no.like(f"{prefix}%")
+            )
         )
     ).scalar_one_or_none()
     sequence = int(last[len(prefix) :]) + 1 if last else 1
