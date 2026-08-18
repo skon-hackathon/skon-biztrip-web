@@ -441,7 +441,12 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
             )
     await session.flush()
 
-    settleable = [t for t in trips if t.status in {TripStatus.COMPLETED, TripStatus.SETTLED}][:12]
+    # SETTLED 출장은 정산서가 APPROVED로 승인됐다는 뜻이므로 정산서가 **반드시** 있어야
+    # 한다. 그래서 SETTLED를 먼저 채우고 남는 자리를 COMPLETED로 메운다. 덕분에 정산서가
+    # 없는 COMPLETED 출장이 남아 "미정산" 데모와 정산서 생성 시나리오가 성립한다.
+    settled_trips = [t for t in trips if t.status == TripStatus.SETTLED]
+    completed_trips = [t for t in trips if t.status == TripStatus.COMPLETED]
+    settleable = (settled_trips + completed_trips)[:12]
     for index, trip in enumerate(settleable, start=1):
         report = ExpenseReport(
             report_no=f"EX-2026-{index:04d}",

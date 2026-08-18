@@ -347,7 +347,9 @@ async def _recalc_total(session: AsyncSession, report: ExpenseReport) -> None:
     ).all()
     total = sum_included([(amount, excluded) for amount, excluded in rows])
     assert_report_total(total)
-    report.total_amount_krw = total
+    # Numeric(14, 2)와 같은 자릿수로 고정한다. 그러지 않으면 항목이 0건일 때만 "0",
+    # 있을 때는 "30000.00"처럼 응답 문자열 모양이 갈려 Agent 쪽 파싱이 지저분해진다.
+    report.total_amount_krw = total.quantize(Decimal("0.01"))
 
 
 async def _load_editable_report(
