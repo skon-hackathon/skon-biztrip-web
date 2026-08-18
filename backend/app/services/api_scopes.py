@@ -27,8 +27,8 @@ _CR = ApiKeyScope.CARDS_READ
 #:    spec이 스코프를 6종으로 고정했으므로 별도 스코프를 만들지 않는다.
 #: 2. 본인 리소스 (`/auth/me` `/notifications`).
 #: 어느 쪽이든 **표에 명시적으로 적어야** 소진 가드를 통과한다. 빠뜨리면 기동이 실패한다.
-#: `/api-keys`·`/scopes`는 라우터가 생기는 Task 10·11에서 함께 추가한다 — 라우트 없는 표
-#: 항목도 소진 가드가 거부하므로 표와 라우터는 반드시 같은 커밋에서 움직인다.
+#: 표와 라우터는 반드시 같은 커밋에서 움직인다 — 라우트 없는 표 항목도, 표에 없는 라우트도
+#: 소진 가드가 거부한다.
 SCOPE_REQUIREMENTS: dict[tuple[str, str], ApiKeyScope | None] = {
     ("GET", "/api/v1/auth/me"): None,
     ("GET", "/api/v1/codes"): None,
@@ -38,6 +38,7 @@ SCOPE_REQUIREMENTS: dict[tuple[str, str], ApiKeyScope | None] = {
     ("GET", "/api/v1/api-keys"): None,
     ("POST", "/api/v1/api-keys"): None,
     ("POST", "/api/v1/api-keys/{key_id}/revoke"): None,
+    ("GET", "/api/v1/scopes"): None,
     ("GET", "/api/v1/notifications"): None,
     ("POST", "/api/v1/notifications/{notification_id}/read"): None,
     ("GET", "/api/v1/trips"): _TR,

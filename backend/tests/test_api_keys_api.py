@@ -109,3 +109,31 @@ async def test_expiry_days_out_of_range_is_422(client, login_as, seeded):
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "SCHEMA_INVALID"
+
+
+async def test_scope_catalog_is_served_from_the_same_table(client, login_as, seeded):
+    headers = await login_as("user1@skon.example")
+
+    response = await client.get("/api/v1/scopes", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["scope"] for item in body] == [
+        "trips:read",
+        "trips:write",
+        "expenses:read",
+        "expenses:write",
+        "cards:read",
+        "admin",
+    ]
+    trips_read = next(item for item in body if item["scope"] == "trips:read")
+    assert "GET /api/v1/trips" in trips_read["endpoints"]
+    assert trips_read["description"]
+
+
+async def test_scope_catalog_is_readable_with_any_key(client, db_session, seeded):
+    """Agent가 자기 키로 '무엇을 부를 수 있는지'를 스스로 조회할 수 있어야 한다."""
+    user = await make_user(db_session)
+    raw, _ = await make_api_key(db_session, user=user, scopes=[ApiKeyScope.CARDS_READ])
+    response = await client.get("/api/v1/scopes", headers={"X-API-Key": raw})
+    assert response.status_code == 200

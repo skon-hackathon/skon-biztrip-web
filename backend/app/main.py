@@ -6,7 +6,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.errors import register_error_handlers
-from app.routers import api_keys, auth, cards, centers, codes, expenses, notifications, trips
+from app.routers import api_keys, auth, cards, centers, codes, expenses, meta, notifications, trips
 from app.services.api_scopes import assert_scope_table_complete
 
 
@@ -35,6 +35,7 @@ app.include_router(cards.router)
 app.include_router(centers.router)
 app.include_router(codes.router)
 app.include_router(expenses.router)
+app.include_router(meta.router)
 app.include_router(notifications.router)
 app.include_router(trips.router)
 
