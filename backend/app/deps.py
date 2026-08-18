@@ -8,6 +8,7 @@ from app.errors import AuthError, ForbiddenError
 from app.models import User
 from app.security import decode_access_token
 from app.services.api_keys import authenticate_key
+from app.services.api_scopes import required_scope_for
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -37,6 +38,31 @@ async def _authenticate_jwt(request: Request, session: AsyncSession) -> User:
     return user
 
 
+def _enforce_scope(request: Request) -> None:
+    """이 요청이 이 엔드포인트를 부를 스코프를 가졌는지 본다.
+
+    검사가 여기 한 곳에만 있는 것이 핵심이다. 엔드포인트마다 의존성을 붙이는 방식은
+    빠뜨릴 수 있고, 빠뜨린 결과가 fail-open(그 엔드포인트만 전권)이다.
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if path is None:  # pragma: no cover - 라우팅된 요청에는 항상 route가 있다
+        raise ForbiddenError("SCOPE_UNDECLARED", "경로를 확인할 수 없습니다")
+
+    required = required_scope_for(request.method, path)
+    scopes = request.state.scopes
+    # 센티널과의 **동일성** 비교. `if not scopes`나 `getattr(..., None)`로 바꾸면
+    # 스코프가 빈 키가 전권을 얻는다.
+    if scopes is UNRESTRICTED:
+        return
+    if required is None:
+        return
+    if str(required) not in scopes:
+        raise ForbiddenError(
+            "SCOPE_REQUIRED", f"이 요청에는 {required} 스코프가 필요합니다"
+        )
+
+
 async def get_principal(request: Request, session: DbSession) -> User:
     """JWT 또는 API Key로 인증한다. 웹과 Agent가 같은 라우터를 쓰는 지점이다.
 
@@ -53,14 +79,15 @@ async def get_principal(request: Request, session: DbSession) -> User:
         await session.commit()
         request.state.scopes = scopes
         request.state.auth_method = "api_key"
-        return user
+    else:
+        user = await _authenticate_jwt(request, session)
+        # UNRESTRICTED 센티널을 쓰는 이유: None을 쓰면 "제한 없음"과 "get_principal이 아예
+        # 실행되지 않음"이 구분되지 않는다. 스코프 검사기가 기본값으로 읽는 순간,
+        # 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는다.
+        request.state.scopes = UNRESTRICTED
+        request.state.auth_method = "jwt"
 
-    user = await _authenticate_jwt(request, session)
-    # UNRESTRICTED 센티널을 쓰는 이유: None을 쓰면 "제한 없음"과 "get_principal이 아예
-    # 실행되지 않음"이 구분되지 않는다. 스코프 검사기가 기본값으로 읽는 순간,
-    # 의존성을 빠뜨린 엔드포인트가 조용히 전체 권한을 얻는다.
-    request.state.scopes = UNRESTRICTED
-    request.state.auth_method = "jwt"
+    _enforce_scope(request)
     return user
 
 
