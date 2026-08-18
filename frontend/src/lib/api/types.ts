@@ -228,3 +228,36 @@ export interface ExpenseItemPatch {
 	fund_center_code?: string | null;
 	cost_center_code?: string | null;
 }
+
+export type ApiKeyScope =
+	| 'trips:read'
+	| 'trips:write'
+	| 'expenses:read'
+	| 'expenses:write'
+	| 'cards:read'
+	| 'admin';
+
+export type ApiKeyState = 'ACTIVE' | 'REVOKED' | 'EXPIRED';
+
+export interface ApiKeySummary {
+	id: number;
+	name: string;
+	key_prefix: string;
+	scopes: ApiKeyScope[];
+	state: ApiKeyState;
+	last_used_at: string | null;
+	expires_at: string | null;
+	revoked_at: string | null;
+	created_at: string;
+}
+
+/** 발급 직후에만 존재한다. `key`는 이 응답 이후 어디에서도 다시 얻을 수 없다. */
+export interface ApiKeyCreated extends ApiKeySummary {
+	key: string;
+}
+
+export interface ScopeInfo {
+	scope: ApiKeyScope;
+	description: string;
+	endpoints: string[];
+}
