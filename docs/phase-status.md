@@ -1,21 +1,23 @@
 # Phase 현황 — 완료분과 다음 작업
 
-- 기준: Phase 4 (개발자) 완료 시점
+- 기준: Phase 5 (운영) 완료 시점
 - 설계: [`superpowers/specs/2026-08-12-skon-biztrip-web-design.md`](superpowers/specs/2026-08-12-skon-biztrip-web-design.md)
 - Phase 1 계획: [`superpowers/plans/2026-08-12-phase1-foundation.md`](superpowers/plans/2026-08-12-phase1-foundation.md)
 - Phase 2 계획: [`superpowers/plans/2026-08-17-phase2-trips.md`](superpowers/plans/2026-08-17-phase2-trips.md)
 - Phase 3 계획: [`superpowers/plans/2026-08-18-phase3-expenses.md`](superpowers/plans/2026-08-18-phase3-expenses.md)
 - Phase 4 계획: [`superpowers/plans/2026-08-18-phase4-developers.md`](superpowers/plans/2026-08-18-phase4-developers.md)
+- Phase 5 계획: [`superpowers/plans/2026-08-18-phase5-admin-ops.md`](superpowers/plans/2026-08-18-phase5-admin-ops.md)
+- 브라우저 수동 시나리오: [`manual-scenarios.md`](manual-scenarios.md)
 
 | Phase | 범위 | 상태 |
 |---|---|---|
 | 1 | 기반 — 스키마·인증·SPA 골격·배포 | 완료 |
 | 2 | 출장 — 신청·목록·상세·수정·결재·타임라인·알림 | 완료 |
 | 3 | 정산 — 카드내역·자동매칭·정산서·FC/CC | 완료 |
-| 4 | 개발자 — API Key·스코프·`/developers` 가이드 | **완료** |
-| 5 | 운영 — Admin CRUD, 반응형, 배포 검증 | 다음 |
+| 4 | 개발자 — API Key·스코프·`/developers` 가이드 | 완료 |
+| 5 | 운영 — Admin CRUD, 반응형, 배포 검증 | **완료** |
 
-**테스트**: 백엔드 486건 · 프론트 60건 · 타입체크 0 errors / 0 warnings · 빌드 성공
+**테스트**: 백엔드 569건 · 프론트 73건 · 타입체크 0 errors / 0 warnings · 빌드 성공
 
 ---
 
@@ -312,6 +314,96 @@ curl로 Agent 경로를 그대로 밟았다.
 
 ---
 
+## Phase 5 — 완료
+
+계획서 23개 태스크를 인라인으로 실행했다(서브에이전트 없음). 태스크마다 테스트 선작성 → 구현 → mutation 검증 순서를 지켰다.
+
+### 백엔드 — 서비스 계층
+
+| 모듈 | 책임 |
+|---|---|
+| `services/admin/common.py` | `assert_password_length`(순수) · `assert_unique` · `delete_entity`(IntegrityError→409 + 세션 롤백) |
+| `services/admin/departments.py` | 부서 CRUD, 상위부서 검증(자기참조 금지) |
+| `services/admin/codes.py` | 코드그룹·코드 CRUD, "비활성화 후 삭제" 2단계 |
+| `services/admin/centers.py` | FC/CC CRUD(모델 파라미터 공유) + `_REFERENCES` 참조 검사 |
+| `services/admin/users.py` | 사용자 CRUD(삭제 없음)·비밀번호 설정·자기강등 금지·이름 일괄 조회 |
+| `services/admin/cards.py` | 법인카드 CRUD(실제 FK 삭제 경로) |
+
+### 백엔드 — API (28개, 전부 `ApiKeyScope.ADMIN`)
+
+```
+GET|POST        /api/v1/admin/departments
+PATCH|DELETE    /api/v1/admin/departments/{department_id}
+GET|POST        /api/v1/admin/code-groups
+PATCH|DELETE    /api/v1/admin/code-groups/{group_id}
+POST            /api/v1/admin/code-groups/{group_id}/codes
+PATCH|DELETE    /api/v1/admin/codes/{code_id}
+GET|POST        /api/v1/admin/fund-centers   ·  PATCH|DELETE /api/v1/admin/fund-centers/{center_id}
+GET|POST        /api/v1/admin/cost-centers   ·  PATCH|DELETE /api/v1/admin/cost-centers/{center_id}
+GET|POST        /api/v1/admin/users
+GET|PATCH       /api/v1/admin/users/{user_id}
+POST            /api/v1/admin/users/{user_id}/password      ← JWT 전용
+GET|POST        /api/v1/admin/cards  ·  PATCH|DELETE /api/v1/admin/cards/{card_id}
+```
+
+사용자 목록 필터: `q`(이름·이메일·사번) · `department_id` · `role` · `is_active` · `page` · `size`
+
+### 프론트엔드
+
+| 항목 | 내용 |
+|---|---|
+| 화면 | `/admin/codes` `/admin/centers` `/admin/departments` `/admin/users` `/admin/cards` + `/admin` 레이아웃(ADMIN 가드·서브탭) |
+| 데이터 계층 | `api/admin.ts`(23개 함수, 전부 `authRequest`) · `lib/admin.ts`(순수 헬퍼) · `stores/admin-resource.svelte.ts` |
+| 반응형 | `--breakpoint-tablet: 744px` 신설, AppShell 햄버거 시트, 넓은 표 5곳 가로 스크롤 |
+
+### 확정한 설계 결정
+
+| 쟁점 | 결정 | 이유 |
+|---|---|---|
+| Admin 인가 | `AdminUser`(role) + 표의 `ADMIN`(scope) **둘 다** | 역할만 보면 ADMIN이 발급한 `trips:read` 키가 열리고, 스코프만 보면 EMPLOYEE 소유의 admin 키가 통과한다 |
+| 비밀번호 설정 | JWT 전용(`JwtOnlyAdmin`) | admin 스코프 키 → 남의 비밀번호 → 그 계정 로그인 → 전권 키. 키 관리 API의 JWT 전용 방어가 우회된다 |
+| 비밀번호 길이 | 서비스의 `assert_password_length`(바이트) | `max_length`는 문자 수라 한글 72자(216바이트)를 통과시켜 bcrypt에서 500이 된다 |
+| 사용자 삭제 | 없음. 비활성화만 | trip·expense_report·card·api_key·activity_log가 참조한다. 감사 흔적을 지우는 것도 옳지 않다 |
+| 자기 강등 | 409 `CANNOT_DEMOTE_SELF` | 마지막 ADMIN이 스스로를 내리면 복구 경로가 DB 직접 수정뿐이다 |
+| 코드 삭제 | 활성 코드는 409 `CODE_STILL_ACTIVE` | 업무 테이블이 코드값을 문자열로 참조해 FK가 없다. "비활성화 후 삭제"가 유일하게 값싼 방어선 |
+| 코드그룹 삭제 | 코드가 남아 있으면 409 | `cascade="all, delete-orphan"`이 자식을 조용히 쓸어가는 것을 2단계로 바꾼다 |
+| 센터 삭제 | `_REFERENCES` 열거로 409 | FK가 없다. 참조처가 trip·expense_report·expense_item 3곳뿐이라 셀 수 있다 |
+| 유니크 위반 | 삽입 전 SELECT → 409 + `field` | `IntegrityError`로는 어느 컬럼이 겹쳤는지 몰라 `field`를 못 채운다 |
+| Admin 목록 | 비활성 행 포함(전용 스키마) | 관리 화면이 비활성 값을 못 보면 되살릴 수 없다. 일반 화면은 기존 스키마 그대로 활성만 본다 |
+| PATCH | `model_dump(exclude_unset=True)` | `parent_id=None`의 "안 보냄"과 "null로 지우기"를 가르는 유일한 수단 |
+| 프론트 공유 | `AdminResource`가 목록·에러·중복제출 가드 소유 | 화면 5개에 같은 가드를 손으로 넣으면 하나는 빠진다 |
+| 반응형 기준선 | `tablet:`(744px) 신설, `md:`(768px) 유지 | DESIGN.md 기준은 744px. `--breakpoint-md`를 덮으면 기존 13개 화면 그리드가 함께 움직인다 |
+
+### mutation 검증 목록
+
+| 가드 | 깨진 것 |
+|---|---|
+| `delete_entity`의 `except IntegrityError` | `test_delete_entity_turns_a_reference_into_409` |
+| `MAX_PASSWORD_BYTES = 72` | `test_korean_password_over_72_bytes_is_rejected` |
+| `AdminUser`에 MANAGER 추가 | `test_manager_is_rejected` |
+| `SCOPE_REQUIREMENTS`에서 admin 항목 1개 삭제 | 임포트 시점 `RuntimeError`(앱이 뜨지 않음) |
+| `delete_code`의 활성 검사 · `delete_code_group`의 코드 검사 | 각 1건 |
+| `_REFERENCES[CostCenter]`의 `Trip.cost_center_code` | `test_center_referenced_only_by_a_trip_cannot_be_deleted` |
+| `update_user`의 자기강등 블록 | 2건 |
+| 비밀번호 라우트의 `JwtOnlyAdmin` → `AdminUser` | `test_password_reset_rejects_api_keys` |
+| 사용자 목록의 부서 일괄 조회 → 행별 조회 | 쿼리 수 상한 테스트 |
+| `delete_card`의 `delete_entity` → raw delete | 409가 500이 됨 |
+| `AdminResource.run`의 `if (this.busy) return false` | 중복 제출 테스트 |
+
+### mutation이 **못** 잡은 것 (기록)
+
+- 결재자 이름을 행별 `session.get`으로 바꿔도 쿼리 수가 늘지 않는다. 목록 쿼리가 이미 적재한 identity map에서 나오기 때문이다. 실제로 늘어나는 것은 부서 조회이고 상한 테스트가 그것을 잡는다.
+- 시드의 `CC2100`은 출장·정산서 양쪽이 참조해서, `_REFERENCES`의 Trip 항목만 지워도 정산서 항목이 대신 걸렸다. 참조처를 출장 하나로 한정한 테스트를 따로 추가해 그 구멍을 닫았다.
+
+### Phase 5에서 처리한 이월 항목
+
+- `/admin/*`을 `SCOPE_REQUIREMENTS`에 `ADMIN`으로 등록(28항목). 소진 가드가 실제로 동작하는 것을 mutation으로 확인했다.
+- Admin 삭제의 `IntegrityError` → 409 `HAS_DEPENDENTS` 변환(`delete_entity`).
+- 비밀번호 엔드포인트의 72바이트 가드.
+- `admin` 스코프에 엔드포인트가 생겼다. `/scopes` 카탈로그와 `/developers` 가이드가 자동으로 따라온다.
+- 반응형 744px 뼈대: 헤더 햄버거 시트 + 표 5곳 가로 스크롤.
+- Phase 4의 "admin 스코프는 엔드포인트 없음" 테스트를 "카탈로그가 admin 경로 전부를 덮는다"로 교체했다.
+
 ## Phase 4에서 넘어온 항목
 
 **UI**
@@ -330,28 +422,43 @@ curl로 Agent 경로를 그대로 밟았다.
 - **매칭 후보 조회는 페이징이 없다.** 출장 기간 ±2일이라 건수가 작지만, 장기 출장에서는 커질 수 있다.
 - **운영 DB의 기존 시드 데이터는 옛 배정 규칙 그대로다** (위 "시드 결함 수정" 참조).
 - **`last_used_at`을 매 요청 갱신한다.** API Key 요청마다 UPDATE + COMMIT 1회. 데모 규모에서는 문제없지만 트래픽이 늘면 60초 스로틀이나 배치 갱신으로 옮긴다. 지금은 "마지막 사용"이 실시간으로 움직이는 게 데모 포인트라 그대로 뒀다.
-- **`admin` 스코프에 엔드포인트가 없다.** Phase 5에서 `/admin/*`을 만들면 `SCOPE_REQUIREMENTS`에 `ApiKeyScope.ADMIN`으로 등록해야 한다. 빠뜨리면 조용히 통과하는 게 아니라 **기동이 실패**한다(소진 가드).
+- ~~**`admin` 스코프에 엔드포인트가 없다.**~~ → Phase 5에서 28개가 열렸다.
 - **키 발급·폐기는 `activity_log`에 남지 않는다.** `EntityType`이 `TRIP|EXPENSE_REPORT`뿐이라 새 멤버가 필요하고 spec에 없다. 감사 요구가 생기면 그때 넣는다.
 - **rate limit·IP 제한 없음** (spec 7이 명시적으로 범위 밖).
 - **`MAX_ACTIVE_KEYS` 검사에 TOCTOU가 있다.** 동시에 두 건을 발급하면 둘 다 개수 검사를 통과할 수 있다. 상한이 한 개 넘는 것뿐이고 권한 상승이 아니라 그대로 뒀다. 엄밀히 막으려면 유니크 제약이나 advisory lock이 필요하다 (`next_trip_no`의 `max()+1`과 같은 종류의 미결).
 - **검증 중 만든 데모 데이터가 운영 DB에 남아 있다.** 출장 `BT-2026-0042`(SUBMITTED)와 폐기된 API Key 2건(user1·admin). 실제 사용 흔적이라 지우지 않았다.
 
+## Phase 5에서 넘어온 항목
+
+**Phase 5가 새로 남긴 것**
+
+- **부서 트리의 일반 순환(A→B→A)은 검사하지 않는다.** 자기 자신만 막는다. 데모 조직은 2단계이고 일반 순환 검출은 재귀 조회가 필요하다.
+- **유니크 검사에 TOCTOU가 있다.** 삽입 전 SELECT로 보므로 동시에 같은 코드를 만들면 둘 다 통과하고 DB 제약이 500으로 잡는다 (`MAX_ACTIVE_KEYS`와 같은 종류의 미결).
+- **코드·센터 삭제 가드는 참조 열거에 의존한다.** FK가 없어서다. 코드 문자열을 참조하는 테이블을 새로 만들면 `admin/centers.py`의 `_REFERENCES`와 코드 삭제 규칙을 함께 늘려야 한다.
+- **DESIGN.md의 "모바일에서 reservation card → 화면 하단 sticky bar"는 미구현이다.** 현재는 좁은 화면에서 우측 카드가 아래로 쌓인다. 헤더 햄버거와 표 가로 스크롤만 넣었다.
+- **Admin 화면은 낙관적 갱신을 하지 않는다.** 모든 쓰기 뒤에 목록을 통째로 다시 읽는다(`AdminResource.run`). 마스터 규모가 작아서 택한 단순함이다.
+- **Admin 목록에 페이징 UI가 없다.** 사용자 목록만 서버 페이징이 있고 화면은 `size=100`으로 한 번에 읽는다.
+- **키 발급·폐기는 여전히 `activity_log`에 남지 않는다.** Admin 마스터 변경도 마찬가지다 — `EntityType`에 멤버가 없다.
+
+**Phase 4에서 그대로 넘어온 것**
+
+- `last_used_at`을 API Key 요청마다 UPDATE + COMMIT 한다(스로틀 미적용).
+- 출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다.
+- 항목의 FC/CC override는 제출 시 재검증되지 않는다.
+- 목록 `q`는 LIKE 와일드카드를 이스케이프하지 않는다(출장·정산·사용자 모두).
+- `next_trip_no`·`next_report_no`가 `max() + 1`이다.
+- 매칭 후보 조회에 페이징이 없다.
+- 알림 뱃지는 라우트 변경 시에만 갱신된다. 대시보드 집계는 목록 API 4회 호출이다.
+- rate limit·IP 제한 없음.
+- 운영 DB의 옛 시드 데이터는 옛 배정 규칙 그대로다.
+
 ## 이후 Phase
 
-| Phase | 범위 |
-|---|---|
-| 5 | 운영 — Admin(공통코드·센터·사용자·부서·카드), 반응형, 배포 재검증 |
-
-**Phase 5 착수 시 반드시 볼 것**
-
-- **새 엔드포인트를 만들면 같은 커밋에서 `SCOPE_REQUIREMENTS`에 넣어야 한다.** `/admin/*`은 `ApiKeyScope.ADMIN`이다. 빠뜨리면 `main.py` 임포트 시점에 `RuntimeError`로 앱이 뜨지 않는다 — 이건 버그가 아니라 설계다. 표와 라우터는 항상 함께 움직인다.
-- **Admin 삭제 엔드포인트는 `IntegrityError`를 409 `HAS_DEPENDENTS`로 변환해야 한다.** 안 하면 catch-all에 걸려 500이 되고, Agent가 5xx를 재시도한다 (spec 7 마스터 데이터 절).
-- **비밀번호 설정·변경 엔드포인트를 만든다면 요청 스키마에서 72바이트를 막아야 한다.** bcrypt 5.x는 초과 시 자르지 않고 예외를 던지며, 한글은 24자만 넘어도 터진다.
-- **반응형 작업량이 Phase 4에서 2개 더 늘었다** (`/settings/api-keys`·`/developers`). 둘 다 넓은 표를 쓴다.
+spec 10의 5단계가 모두 끝났다. 다음 작업은 새 요구가 생길 때 정의한다. 우선순위 후보는 위 이월 목록과 아래 공통 미결이다.
 
 ## 전 Phase 공통 미결
 
-- **반응형**: DESIGN.md의 744px 미만 햄버거·시트 붕괴가 미구현이다. 744px에서는 정상이나 375px에서 탭이 두 줄로 깨지고 우측 블록이 화면 밖으로 나간다. 데스크톱 데모 기준이라 의도적으로 넘겼고 뼈대가 하나도 없으므로 해당 Phase에서 처음부터 만들어야 한다. Phase 2에서 6개, Phase 3에서 3개(`/cards`·`/expenses`·`/expenses/[id]`), Phase 4에서 2개(`/settings/api-keys`·`/developers`)가 늘어 작업량이 그만큼 커졌다. 특히 정산 항목 테이블은 좁은 화면에서 가로 스크롤이나 카드 붕괴가 필요하다.
-- **비밀번호 길이**: bcrypt 5.x는 72바이트 초과 시 자르지 않고 예외를 던진다. 한글은 **24자만 넘어도** 터진다. 비밀번호 설정·변경 엔드포인트를 만들 때 요청 스키마에서 막아야 한다.
+- **반응형**: Phase 5에서 뼈대를 넣었다 — `--breakpoint-tablet: 744px`, 헤더 햄버거 시트, 넓은 표 5곳(`CardTransactionTable`·`ExpenseItemsTable`·`/settings/api-keys`·`/developers` 2곳) 가로 스크롤. 남은 것은 DESIGN.md의 모바일 sticky 하단 바(출장·정산 상세의 우측 카드)와 좁은 화면에서의 표 카드 붕괴다.
+- **비밀번호 길이**: bcrypt 5.x는 72바이트 초과 시 자르지 않고 예외를 던진다. 한글은 **24자만 넘어도** 터진다. Phase 5의 `assert_password_length`가 그 가드이며, 비밀번호를 받는 경로를 새로 만들면 반드시 통과시켜야 한다.
 - **운영 `JWT_SECRET`**: compose 기본값은 명백한 placeholder다. 배포 시 32바이트 이상 실제 값을 `.env`로 주입한다.
 - **`init-db`는 컬럼 변경을 반영하지 않는다.** Alembic을 쓰지 않으므로 스키마를 바꾸면 해당 테이블을 지우고 다시 돌려야 한다. 실제 운영 전환이 필요해지면 마이그레이션 도구 도입을 재검토한다.

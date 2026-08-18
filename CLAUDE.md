@@ -7,7 +7,7 @@ SK온 사내 출장시스템을 모사한 데모 웹. 실제 회계·전표 처�
 - Phase 현황·이월 항목: `docs/phase-status.md` — **새 Phase를 시작하기 전에 읽을 것.**
 - 디자인 규칙: `DESIGN.md`
 
-Phase 1(기반)·Phase 2(출장)·Phase 3(정산)·Phase 4(개발자) 완료. 다음은 Phase 5(운영).
+Phase 1(기반)·Phase 2(출장)·Phase 3(정산)·Phase 4(개발자)·Phase 5(운영) 완료.
 
 ## 명령어
 
@@ -22,8 +22,8 @@ cd backend && uv run python -m app.cli init-db    # 스키마 + 없는 테이블
 cd backend && uv run python -m app.cli seed       # 데모 데이터 (멱등)
 
 # 테스트
-cd backend  && uv run pytest          # 486건
-cd frontend && npm test               # 60건
+cd backend  && uv run pytest          # 569건
+cd frontend && npm test               # 73건
 cd frontend && npm run check          # 타입체크, 0 errors / 0 warnings 유지
 
 # 배포 (3서비스 — DB는 스택 밖)
@@ -76,7 +76,17 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **평문 API Key는 발급 응답에만 존재한다.** DB에는 SHA-256만 남는다(`ApiKeyOut`에는 `key` 필드가 없고 `ApiKeyCreated`에만 있다). 목록·상세 응답에 평문을 싣는 어떤 변경도 거부한다.
 
+**Admin 삭제는 `services/admin/common.py`의 `delete_entity`만 쓴다.** `IntegrityError`를 409 `HAS_DEPENDENTS`로 바꾸고 실패한 flush 뒤 세션을 롤백한다. 직접 `session.delete()`+`commit()`을 쓰면 참조가 남은 삭제가 500이 되고 Agent가 재시도한다. 코드값·센터처럼 **FK가 없는 참조**는 DB가 막아주지 못하므로 서비스가 따로 센다(`admin/centers.py`의 `_REFERENCES`, `admin/codes.py`의 "비활성화 후 삭제" 2단계). 코드 문자열을 참조하는 테이블을 새로 만들면 그 표도 함께 늘려야 한다.
+
+**비밀번호를 받는 경로는 `assert_password_length`를 지난다.** bcrypt 5.x는 72바이트 초과를 자르지 않고 던진다(한글 24자가 경계). Pydantic의 `max_length`는 문자 수라 이 검사를 대신할 수 없다.
+
+**비밀번호 설정은 JWT 전용(`JwtOnlyAdmin`)이다.** admin 스코프 키로 남의 비밀번호를 바꿀 수 있으면 그 계정으로 로그인해 전권 키를 발급할 수 있고, 키 관리 API를 JWT 전용으로 막아둔 이유가 통째로 우회된다. OpenAPI의 `_JWT_ONLY_PATHS`에도 같은 사실을 적어야 스키마를 읽는 Agent가 속지 않는다.
+
+**Admin 라우트는 역할과 스코프를 **둘 다** 통과한다.** `AdminUser`(role=ADMIN) + `SCOPE_REQUIREMENTS`의 `ApiKeyScope.ADMIN`. 역할만 보면 ADMIN이 발급한 `trips:read` 키가 admin API를 열고, 스코프만 보면 admin 스코프를 가진 EMPLOYEE 소유 키가 통과한다.
+
 **`AsyncSession`을 `asyncio.gather`로 병렬 사용하지 않는다.** 같은 세션에 `execute`를 병렬로 걸면 `InvalidRequestError`가 난다. 여러 조회를 묶어야 하면 `IN` 절로 쿼리 수를 줄인다 (`services/codes.py`의 `validate_codes`가 그 예 — 그룹 수와 무관하게 쿼리 2개).
+
+**Admin 화면의 목록·에러·중복제출 가드는 `AdminResource`를 쓴다.** 화면마다 `if (submitting) return;`을 손으로 넣으면 하나는 빠지고, 생성은 멱등하지 않아 그게 곧 중복 레코드다. 반응형 분기는 `tablet:`(744px)이며 `md:`(768px)와 다르다 — DESIGN.md 기준선은 744px다.
 
 **`text-body` 클래스를 쓰지 않는다.** `--color-body` 때문에 Tailwind가 이걸 **색상** 유틸리티로 생성한다. 본문 타이포는 `text-body-md` / `text-body-sm`으로 명시한다. 에러가 나지 않고 조용히 틀린다.
 
