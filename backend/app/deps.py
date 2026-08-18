@@ -4,6 +4,7 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
+from app.enums import UserRole
 from app.errors import AuthError, ForbiddenError
 from app.models import User
 from app.security import decode_access_token
@@ -119,3 +120,9 @@ async def get_jwt_principal(request: Request, user: CurrentUser) -> User:
 
 
 JwtOnlyUser = Annotated[User, Depends(get_jwt_principal)]
+
+
+#: Admin 전용 라우트. 역할(사람)과 스코프(키)는 서로를 대체하지 않는다 —
+#: 역할만 보면 ADMIN이 발급한 `trips:read` 키가 admin API를 열고, 스코프만 보면
+#: admin 스코프를 가진 EMPLOYEE 소유 키가 통과한다. 둘 다 통과해야 한다.
+AdminUser = Annotated[User, Depends(require_role(UserRole.ADMIN))]
