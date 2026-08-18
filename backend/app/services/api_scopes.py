@@ -114,3 +114,61 @@ def required_scope_for(method: str, path: str) -> ApiKeyScope | None:
             "SCOPE_UNDECLARED", "이 엔드포인트에 필요한 스코프가 선언되지 않았습니다"
         )
     return SCOPE_REQUIREMENTS[key]
+
+
+def _authenticated_routes(app) -> set[tuple[str, str]]:
+    """`get_principal`을 통과하는 (메서드, 경로) 전부.
+
+    의존성 트리를 재귀로 훑는다 — `get_principal`이 직접 붙지 않고 `JwtOnlyUser`처럼
+    한 겹 감싸서 붙는 경우가 있기 때문이다. 얕게만 보면 그런 라우트가 표 검사에서
+    통째로 빠진다.
+
+    라우트 순회도 `iter_route_contexts`를 거친다 — `include_router`로 등록된 라우트는
+    `app.routes`에 곧바로 `APIRoute`로 나타나지 않고 `_IncludedRouter`로 감싸여 있어서,
+    이 헬퍼로 펼쳐야 실제 라우트(및 그 `dependant`)가 보인다. 앱에 직접 등록한 라우트는
+    감싸이지 않으므로 이 헬퍼가 그대로 통과시킨다.
+    """
+    from fastapi.routing import APIRoute, iter_route_contexts
+
+    from app.deps import get_principal
+
+    found: set[tuple[str, str]] = set()
+    for route_context in iter_route_contexts(app.routes):
+        if not isinstance(route_context.original_route, APIRoute):
+            continue
+        stack = list(route_context.dependant.dependencies)
+        calls = set()
+        while stack:
+            dependency = stack.pop()
+            if dependency.call is not None:
+                calls.add(dependency.call)
+            stack.extend(dependency.dependencies)
+        if get_principal not in calls:
+            continue
+        for method in route_context.methods - {"HEAD", "OPTIONS"}:
+            found.add((method, route_context.path))
+    return found
+
+
+def assert_scope_table_complete(app) -> None:
+    """표와 실제 라우트가 정확히 일치하는지 임포트 시점에 확인한다.
+
+    양방향으로 본다. 라우트가 표에 없으면 스코프 미선언이고, 표에 있는데 라우트가 없으면
+    경로 변경 후 죽은 선언이 남은 것이다. 후자를 방치하면 다음 사람이 그 항목을 보고
+    "이 경로는 보호되고 있다"고 잘못 믿는다.
+    """
+    routes = _authenticated_routes(app)
+    if not routes:
+        # 인증하는 라우트가 하나도 없는 앱(단위테스트의 probe 등)은 스코프 개념 자체가
+        # 없다. 이 표(SCOPE_REQUIREMENTS)는 실제 서비스 앱을 겨냥한 것이라 그런 probe와
+        # 비교하면 표의 모든 항목이 "라우트가 없는 표 항목"으로 잡혀 오탐이 난다.
+        return
+    declared = set(SCOPE_REQUIREMENTS)
+    missing = routes - declared
+    extra = declared - routes
+    if missing or extra:
+        raise RuntimeError(
+            "SCOPE_REQUIREMENTS가 실제 라우트와 어긋납니다. "
+            f"표에 없는 라우트={sorted(f'{m} {p}' for m, p in missing)} "
+            f"라우트가 없는 표 항목={sorted(f'{m} {p}' for m, p in extra)}"
+        )
