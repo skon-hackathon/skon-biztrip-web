@@ -213,7 +213,7 @@ docker compose -p skon-prod down
 DB_HOST=host.docker.internal docker compose --env-file backend/.env -p skon-prod up -d --build
 ```
 
-**Phase 5 시점에 컨테이너 기동은 재검증되지 않았다.** 이미지 빌드가 Docker 데몬의 `ghcr.io` 조회 타임아웃(`DeadlineExceeded`)으로 실패했다 — 코드 문제가 아니라 그 환경의 네트워크 제약이다. 백엔드 임포트(`uv run python -c "import app.main"`)와 프론트 `npm run build`, API curl 시나리오는 통과했다. 자세한 내용은 [`docs/phase-status.md`](docs/phase-status.md)의 "배포 검증 — 미완" 절에 있다.
+**이미지 빌드는 확인됐고 기동은 아직이다.** Phase 5 당시 빌드를 막았던 `ghcr.io` 조회 타임아웃(`DeadlineExceeded`)은 원인을 제거했다 — `backend/Dockerfile`이 uv를 ghcr.io에서 복사하지 않고 PyPI에서 받으므로 레지스트리 의존이 Docker Hub 하나다. `--no-cache` 전체 재빌드로 두 이미지 모두 생성되는 것까지 확인했다. 다만 **3서비스 기동·nginx 프록시·SPA fallback은 여전히 재검증되지 않았다.** 자세한 내용은 [`docs/phase-status.md`](docs/phase-status.md)의 "배포 검증" 절에 있다.
 
 컨테이너 안에서 CLI를 쓰려면:
 

@@ -424,19 +424,25 @@ GET|POST        /api/v1/admin/cards  ·  PATCH|DELETE /api/v1/admin/cards/{card_
 
 검증 후 되돌린 것: CC2100 재활성화, `D500` 삭제, `RISK_LEVEL` 그룹 삭제, 발급한 키 2개 폐기. 비밀번호는 실제로 바뀐 적이 없다(두 시도 모두 403/400으로 거부됐다).
 
-### 배포 검증 — 미완 (환경 제약)
+### 배포 검증 — 빌드 확인 / 기동 미완
 
-`docker compose -p skon-prod up -d --build`가 **이미지 빌드 단계에서 실패**했다. Docker 데몬이 베이스 이미지 메타데이터를 가져오지 못한다:
+Phase 5 당시 `docker compose -p skon-prod up -d --build`가 **이미지 빌드 단계에서 실패**했다:
 
 ```
 > [backend internal] load metadata for ghcr.io/astral-sh/uv:latest:
 target backend: failed to solve: DeadlineExceeded: context deadline exceeded
 ```
 
-호스트에서 `registry-1.docker.io`는 응답하지만(401) 데몬의 `ghcr.io` 조회가 타임아웃한다. 코드 문제가 아니라 이 환경의 네트워크 제약이므로, **3서비스 기동·nginx 프록시·SPA fallback은 Phase 5에서 재검증되지 않았다.** 네트워크가 되는 환경에서 다시 돌려야 한다. 다음 두 가지도 함께 유의한다.
+**2026-08-20 후속 — 당시 진단이 틀렸다.** "호스트에서 `registry-1.docker.io`는 응답하는데(401) 데몬의 `ghcr.io`만 타임아웃하니 이 환경의 네트워크 제약"이라고 적었지만, 그 두 사실은 서로 다른 경로다. `docker info`가 비대칭을 드러낸다 — Docker Desktop은 Hub 이미지를 내장 미러 `hubproxy.docker.internal:5555`로 돌리고 그 호스트는 `No Proxy` 목록에 있어 **조회가 VM 안에서 끝난다.** ghcr.io는 미러 대상이 아니라 `http.docker.internal:3128`을 타고 실제로 밖으로 나가야 한다. 즉 "Hub은 되는데 ghcr만 죽는다"는 네트워크가 멀쩡하다는 증거가 아니라 **VM→인터넷 경로만 끊기고 로컬 미러는 살아 있었다**는 증거였다. 호스트 `curl`은 그 경로를 쓰지 않으므로 반증이 못 된다.
 
-- 저장소 루트에 `.env`가 없어 compose가 기동을 거부한다. `backend/.env`를 쓰려면 `--env-file backend/.env`가 필요하고, 그 파일의 `DB_HOST=localhost`는 컨테이너 안에서 자신을 가리키므로 `DB_HOST=host.docker.internal`로 덮어야 한다.
-- 대신 백엔드는 `uv run python -c "import app.main"`으로 임포트(=스코프 소진 가드)까지, 프론트는 `npm run build`로 정적 산출까지 확인했다.
+재점검에서 호스트 DNS·호스트→ghcr·VM 컨테이너 egress·Desktop 프록시·자격증명 헬퍼·BuildKit resolve 여섯 계층 모두 정상이었다(`load metadata for ghcr.io/astral-sh/uv:latest` 2.6초). 재발을 막기 위해 원인 자체를 제거했다 — `backend/Dockerfile`이 uv를 `COPY --from=ghcr.io/astral-sh/uv:latest`로 가져오지 않고 `pip install --no-cache-dir uv==0.12.5`로 받는다. PyPI는 아래의 `uv sync`가 어차피 쓰므로 신규 의존이 아니고, 레지스트리 의존이 Docker Hub 하나로 줄었으며 가변 `:latest` 태그도 없어졌다. 대가는 이미지 322MB → 334MB.
+
+`--no-cache` 전체 재빌드로 확인한 것: 빌드 exit 0, 빌드 그래프에 ghcr 단계 없음, `uv 0.12.5` @ `/usr/local/bin/uv`(경로가 같아 `CMD`·`uv sync` 무수정), `uv run --no-dev python -c "import app.main"` 통과(=스코프 소진 가드), backend·frontend 이미지 2개 생성.
+
+**여전히 미검증: 3서비스 기동·nginx 프록시·SPA fallback.** `up`은 운영 PostgreSQL에 실제로 붙으므로 돌리지 않았다. 돌릴 때 다음 두 가지에 유의한다.
+
+- 저장소 루트에 `.env`가 없어 compose가 **보간 단계에서** 거부한다(`required variable JWT_SECRET is missing a value`) — 빌드에 닿지도 못한다. `backend/.env`를 쓰려면 `--env-file backend/.env`가 필요하고, 그 파일의 `DB_HOST=localhost`는 컨테이너 안에서 자신을 가리키므로 `DB_HOST=host.docker.internal`로 덮어야 한다.
+- 백엔드 임포트(=스코프 소진 가드)와 프론트 `npm run build`는 Phase 5에서 이미 통과했다.
 
 ### Phase 5에서 처리한 이월 항목
 
@@ -475,7 +481,7 @@ target backend: failed to solve: DeadlineExceeded: context deadline exceeded
 
 **Phase 5가 새로 남긴 것**
 
-- **3서비스 컨테이너 기동이 재검증되지 않았다.** 이미지 빌드가 `ghcr.io` 조회 타임아웃으로 실패했다(위 "배포 검증 — 미완" 참조). 네트워크가 되는 환경에서 `docker compose -p skon-prod up -d --build`를 다시 돌리고 `/api/v1/health`·`/api/v1/health/db`·`/admin/codes` SPA fallback을 확인해야 한다.
+- **3서비스 컨테이너 기동이 재검증되지 않았다.** 이미지 빌드는 2026-08-20에 확인됐고 `ghcr.io` 의존도 제거했다(위 "배포 검증" 참조). 남은 것은 기동이다 — `DB_HOST=host.docker.internal docker compose --env-file backend/.env -p skon-prod up -d`를 돌리고 `/api/v1/health`·`/api/v1/health/db`·`/admin/codes` SPA fallback을 확인해야 한다.
 - **브라우저 수동 시나리오 33개가 여전히 미확인이다.** 목록은 [`manual-scenarios.md`](manual-scenarios.md)에 모았다(Phase 2 이월 8 + Phase 3 이월 6 + Phase 4 이월 9 + Phase 5 신규 10). Phase 5의 화면 5개와 햄버거 시트도 **렌더 확인이 전혀 안 됐다** — 타입체크·빌드·API(curl)만 통과한 상태다.
 
 - **부서 트리의 일반 순환(A→B→A)은 검사하지 않는다.** 자기 자신만 막는다. 데모 조직은 2단계이고 일반 순환 검출은 재귀 조회가 필요하다.

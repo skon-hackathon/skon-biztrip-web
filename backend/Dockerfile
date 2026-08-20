@@ -1,6 +1,8 @@
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# uv는 PyPI에서 받는다. ghcr.io는 Docker Desktop의 Hub 미러 밖이라 VM egress가
+# 끊기면 이 한 줄만 DeadlineExceeded로 죽는다. PyPI는 아래 uv sync가 어차피 쓴다.
+RUN pip install --no-cache-dir uv==0.12.5
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
