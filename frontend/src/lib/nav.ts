@@ -1,5 +1,5 @@
 /** 로그인 없이 볼 수 있는 라우트. 자식 경로까지 공개로 취급한다. */
-const PUBLIC_PREFIXES = ['/login'];
+const PUBLIC_PREFIXES = ['/login', '/signup'];
 
 export function isPublicPath(pathname: string): boolean {
 	return PUBLIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));

@@ -300,17 +300,21 @@ export interface AdminCenter {
 /** FC/CC는 컬럼도 규칙도 같아서 화면 하나가 탭으로 다룬다. */
 export type CenterKind = 'fund-centers' | 'cost-centers';
 
+export type UserStatus = 'PENDING' | 'ACTIVE' | 'REJECTED';
+
 export interface AdminUser {
 	id: number;
 	email: string;
 	name: string;
-	employee_no: string;
+	// 가입 대기 계정은 아직 값이 없다. 승인이 채운다.
+	employee_no: string | null;
 	department_id: number;
 	department_name: string;
-	position_code: string;
+	position_code: string | null;
 	manager_id: number | null;
 	manager_name: string | null;
 	role: UserRole;
+	status: UserStatus;
 	is_active: boolean;
 }
 
@@ -342,4 +346,29 @@ export interface AdminCard {
 	card_no_masked: string;
 	brand: string;
 	is_active: boolean;
+}
+
+export interface UserApproveInput {
+	employee_no: string;
+	position_code: string;
+	manager_id?: number | null;
+	role?: UserRole;
+}
+
+export interface SignupInput {
+	email: string;
+	password: string;
+	name: string;
+	department_id: number;
+}
+
+export interface SignupResult {
+	email: string;
+	status: UserStatus;
+	message: string;
+}
+
+export interface PublicDepartment {
+	id: number;
+	name: string;
 }

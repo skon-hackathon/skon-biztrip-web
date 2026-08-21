@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { isPublicPath, loginPathFor, safeRedirect } from './nav';
 
 describe('isPublicPath', () => {
+	it('가입 화면은 로그인 없이 열린다', () => {
+		expect(isPublicPath('/signup')).toBe(true);
+	});
+
 	it('matches the public route itself', () => {
 		expect(isPublicPath('/login')).toBe(true);
 	});
