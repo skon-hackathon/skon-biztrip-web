@@ -1,12 +1,20 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, status as http_status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import CurrentUser, DbSession
 from app.errors import AuthError
 from app.models import Department, User
-from app.schemas.auth import LoginRequest, LoginResponse, UserOut
+from app.schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    PublicDepartment,
+    SignupRequest,
+    SignupResponse,
+    UserOut,
+)
 from app.security import create_access_token, hash_password, verify_password
+from app.services import signup as signup_service
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -50,3 +58,21 @@ async def login(payload: LoginRequest, session: DbSession) -> LoginResponse:
 @router.get("/me", response_model=UserOut)
 async def me(user: CurrentUser, session: DbSession) -> UserOut:
     return await _to_user_out(session, user)
+
+
+@router.get("/departments", response_model=list[PublicDepartment])
+async def public_departments(session: DbSession) -> list[PublicDepartment]:
+    """**미인증.** 가입 폼의 부서 드롭다운용으로 id·name만 낸다.
+
+    `get_principal`을 지나지 않으므로 `SCOPE_REQUIREMENTS`에 넣지 않는다 — 소진 가드는
+    인증 라우트만 대조한다.
+    """
+    return await signup_service.list_public_departments(session)
+
+
+@router.post(
+    "/signup", response_model=SignupResponse, status_code=http_status.HTTP_201_CREATED
+)
+async def signup(payload: SignupRequest, session: DbSession) -> SignupResponse:
+    """**미인증.** 가입 신청만 만든다. 승인 전에는 로그인할 수 없으므로 토큰을 주지 않는다."""
+    return await signup_service.signup(session, payload=payload)
