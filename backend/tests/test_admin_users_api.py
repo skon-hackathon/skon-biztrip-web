@@ -293,3 +293,138 @@ async def test_get_single_user_is_404_when_missing(client, seeded, login_as):
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "USER_NOT_FOUND"
+
+
+async def _pending(db_session):
+    from app.enums import UserStatus
+    from tests.factories import make_user
+
+    user = await make_user(db_session, status=UserStatus.PENDING, is_active=False)
+    user.employee_no = None
+    user.position_code = None
+    await db_session.commit()
+    return user
+
+
+async def test_approve_fills_org_fields_and_opens_login(client, db_session, seeded, login_as):
+    from app.enums import UserStatus
+
+    user = await _pending(db_session)
+    headers = await login_as("admin@skon.example")
+
+    response = await client.post(
+        f"/api/v1/admin/users/{user.id}/approve",
+        json={"employee_no": "E0777", "position_code": "STAFF", "role": "EMPLOYEE"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ACTIVE"
+    assert body["employee_no"] == "E0777"
+    assert body["is_active"] is True
+
+    await db_session.refresh(user)
+    assert user.status is UserStatus.ACTIVE
+    assert user.is_active is True
+
+
+async def test_approve_rejects_duplicate_employee_no(client, db_session, seeded, login_as):
+    user = await _pending(db_session)
+    headers = await login_as("admin@skon.example")
+
+    response = await client.post(
+        f"/api/v1/admin/users/{user.id}/approve",
+        json={"employee_no": "E0001", "position_code": "STAFF"},
+        headers=headers,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "DUPLICATE_EMPLOYEE_NO"
+
+
+async def test_approve_rejects_unknown_position(client, db_session, seeded, login_as):
+    user = await _pending(db_session)
+    headers = await login_as("admin@skon.example")
+
+    response = await client.post(
+        f"/api/v1/admin/users/{user.id}/approve",
+        json={"employee_no": "E0778", "position_code": "NOT_A_CODE"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+async def test_approve_twice_conflicts(client, db_session, seeded, login_as):
+    user = await _pending(db_session)
+    headers = await login_as("admin@skon.example")
+    body = {"employee_no": "E0779", "position_code": "STAFF"}
+
+    first = await client.post(
+        f"/api/v1/admin/users/{user.id}/approve", json=body, headers=headers
+    )
+    assert first.status_code == 200
+
+    second = await client.post(
+        f"/api/v1/admin/users/{user.id}/approve",
+        json={"employee_no": "E0780", "position_code": "STAFF"},
+        headers=headers,
+    )
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "USER_INVALID_TRANSITION"
+
+
+async def test_reject_closes_account(client, db_session, seeded, login_as):
+    from app.enums import UserStatus
+
+    user = await _pending(db_session)
+    headers = await login_as("admin@skon.example")
+
+    response = await client.post(
+        f"/api/v1/admin/users/{user.id}/reject", headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "REJECTED"
+
+    await db_session.refresh(user)
+    assert user.status is UserStatus.REJECTED
+    assert user.is_active is False
+
+
+async def test_reject_active_user_conflicts(client, db_session, seeded, login_as):
+    from tests.factories import make_user
+
+    user = await make_user(db_session)
+    await db_session.commit()
+    headers = await login_as("admin@skon.example")
+
+    response = await client.post(
+        f"/api/v1/admin/users/{user.id}/reject", headers=headers
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "USER_INVALID_TRANSITION"
+
+
+async def test_list_users_filters_by_status(client, db_session, seeded, login_as):
+    await _pending(db_session)
+    headers = await login_as("admin@skon.example")
+
+    response = await client.get("/api/v1/admin/users?status=PENDING", headers=headers)
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) >= 1
+    assert all(item["status"] == "PENDING" for item in items)
+
+
+async def test_patch_cannot_change_status(client, db_session, seeded, login_as):
+    """status는 전이 엔드포인트만 바꾼다. PATCH로 열리면 전이 가드 우회 경로가 생긴다."""
+    from app.enums import UserStatus
+
+    user = await _pending(db_session)
+    headers = await login_as("admin@skon.example")
+
+    response = await client.patch(
+        f"/api/v1/admin/users/{user.id}", json={"status": "ACTIVE"}, headers=headers
+    )
+    # Pydantic이 모르는 필드를 무시하든 거부하든, 상태는 바뀌지 않아야 한다.
+    await db_session.refresh(user)
+    assert user.status is UserStatus.PENDING
+    assert response.status_code in (200, 422)

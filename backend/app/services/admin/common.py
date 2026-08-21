@@ -36,6 +36,24 @@ def assert_password_length(password: str, *, field: str = "password") -> None:
         )
 
 
+async def assert_department(session: AsyncSession, department_id: int) -> None:
+    """부서 존재 확인.
+
+    `user.department_id`에는 FK가 없다 — 공유 테이블이 우리 스키마를 역참조하면 계정을
+    공유하는 상대 프로젝트가 사용자를 만들 때 우리 department 행이 있어야 하기 때문이다.
+    그래서 존재 검증을 서비스가 한다. 관리자 생성/수정과 미인증 가입이 **같은 함수**를
+    부른다 — 복사하면 검증이 두 벌이 되어 한쪽만 고쳐진다.
+    """
+    from app.models import Department
+
+    if await session.get(Department, department_id) is None:
+        raise ValidationError(
+            "INVALID_DEPARTMENT",
+            f"존재하지 않는 부서입니다: {department_id}",
+            field="department_id",
+        )
+
+
 async def assert_unique(
     session: AsyncSession, column, value: str, *, code: str, message: str, field: str
 ) -> None:

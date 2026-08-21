@@ -5,7 +5,7 @@ SK온 사내 출장시스템을 모사한 데모 웹. 실제 회계·전표 처�
 - 설계: `docs/superpowers/specs/2026-08-12-skon-biztrip-web-design.md`
 - 구현 계획: `docs/superpowers/plans/` — Phase별로 하나씩. **작업 전 해당 Phase plan을 읽을 것.**
 - Phase 현황·이월 항목: `docs/phase-status.md` — **새 Phase를 시작하기 전에 읽을 것.**
-- 브라우저 수동 시나리오: `docs/manual-scenarios.md` — 40건 미확인. 화면을 건드렸으면 해당 항목을 돌리고 체크한다.
+- 브라우저 수동 시나리오: `docs/manual-scenarios.md` — 54건 미확인. 화면을 건드렸으면 해당 항목을 돌리고 체크한다.
 - 디자인 규칙: `DESIGN.md`
 
 Phase 1(기반)·Phase 2(출장)·Phase 3(정산)·Phase 4(개발자)·Phase 5(운영) 완료.
@@ -23,8 +23,8 @@ cd backend && uv run python -m app.cli init-db    # 스키마 + 없는 테이블
 cd backend && uv run python -m app.cli seed       # 데모 데이터 (멱등)
 
 # 테스트
-cd backend  && uv run pytest          # 569건
-cd frontend && npm test               # 73건
+cd backend  && uv run pytest          # 622건
+cd frontend && npm test               # 74건
 cd frontend && npm run check          # 타입체크, 0 errors / 0 warnings 유지
 
 # 배포 (3서비스 — DB는 스택 밖)
@@ -48,9 +48,41 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **`user` 테이블만 `public` 스키마에 산다.** 다른 프로젝트와 **계정을 공유**하기 위해서다(해커톤 데모라 SSO 대신 같은 테이블 + 같은 `JWT_SECRET`을 쓴다. 토큰 payload는 `{"sub": "<user.id>"}`·HS256이고 해시는 bcrypt다). 스키마는 `USER_DB_SCHEMA`(기본 `public`)가 정하고 `app/models/base.py`의 `USER_SCHEMA`·`USER_FK`가 유일한 선언이다. **user를 참조하는 FK는 반드시 `ForeignKey(USER_FK)`로 쓴다** — `"user.id"` 문자열은 메타데이터 키가 `public.user`라서 해석되지 않고 임포트 시점에 `NoReferencedTableError`로 죽는다. 반대로 `user.department_id`에는 FK를 걸지 않는다. 공유 테이블이 우리 스키마를 역참조하면 상대 프로젝트가 계정을 만들 때 우리 `department` 행이 있어야 하기 때문이다. 그 대가로 부서 삭제 시 사용자 참조를 DB가 막아주지 못하므로 `services/admin/departments.py`가 직접 센다. `role`도 PG enum이 아니라 varchar다 — 같은 이유로 타입 결합을 만들지 않는다.
 
+**`status`와 `is_active`는 의미가 겹치지 않는다.** `status`(`UserStatus`)는 가입 신청의
+생애주기이고 `is_active`는 로그인 가능 여부다. 불변식은 **단방향**이다 — `status != ACTIVE`이면
+반드시 `is_active = false`이지만 역은 성립하지 않는다. 승인 뒤 관리자가 정지시킨 계정이
+`status=ACTIVE` + `is_active=false`이며, 그것이 "승인 대기"와 구분되어야 하는 경우다. 단방향으로
+둔 덕분에 `is_active`의 의미가 바뀌지 않아 로그인 게이트도, 계정을 공유하는 상대 프로젝트의
+시야도 그대로다.
+
+**로그인은 비밀번호 검증에 성공한 뒤에만 `status`를 본다.** 앞에서 보면 이메일만으로 계정
+존재가 드러나 더미 해시로 타이밍까지 맞춘 방어가 무의미해진다. 순서가 방어의 전부다.
+
+**`status`는 `assert_signup_transition_allowed` 하나만 통과한다.** 출장·정산과 같은 구조이며
+이유도 같다. `AdminUserUpdate`에 `status`를 넣지 않는 것은 그래서다 — `PATCH`로 바꿀 수 있으면
+전이 가드를 우회하는 두 번째 경로가 생긴다. 전이를 추가하고 `SIGNUP_TRANSITION_ACTOR`를
+빠뜨리면 임포트 시점에 `RuntimeError`로 죽는다.
+
+**가입은 `PENDING` 행을 덮어쓰지 않는다.** 덮어쓰기를 허용하면 남이 신청해 둔 대기 계정에 내가
+아는 비밀번호를 덮어씌운 뒤 승인을 기다려 계정을 가로챌 수 있다. `REJECTED`만 재신청으로
+덮어쓴다.
+
+**이메일은 스키마 경계에서 소문자로 정규화한다.** `LoginRequest`·`SignupRequest`·
+`AdminUserCreate`의 `field_validator`가 유일한 지점이다. Postgres의 `=`도 `user.email`의 unique
+인덱스도 대소문자를 구분하고, Pydantic의 `EmailStr`은 **도메인만** 소문자화한다. 정규화를 빼면
+`Alice@`와 `alice@`가 서로 다른 계정이 되어 가입 중복 가드가 통째로 우회된다 — 리뷰에서 실제로
+`ALREADY_PENDING`과 `DUPLICATE_EMAIL`을 둘 다 통과하는 것을 확인했다. 이메일을 받는 경로를 새로
+만들면 같은 검증을 붙인다.
+
+**`employee_no`·`position_code`는 nullable이다.** 가입 시점에 값이 없기 때문이며, 임시값 대신
+NULL을 쓰는 이유는 가짜 사번이 상대 프로젝트·유저 관리 화면·Agent API에 실제 값처럼 노출되지
+않게 하려는 것이다. 값의 강제는 컬럼이 아니라 `approve_user`가 한다.
+
 **테스트는 `user`도 테스트 스키마에서 돈다.** `tests/conftest.py`가 app을 임포트하기 **전에** `USER_DB_SCHEMA`를 `TEST_DB_SCHEMA`로 덮어쓰고, `test_engine`이 `User.__table__.schema`를 다시 확인해 아니면 `pytest.exit`한다. 이 두 줄 중 하나라도 지우면 매 테스트 세션의 `drop_all`이 **두 프로젝트의 공유 계정 테이블을 지운다.** `tests/test_user_schema.py`가 이 사실을 고정한다.
 
 **기동 시 스키마·데이터를 절대 자동으로 건드리지 않는다.** `create_all`도 시드도 `app/cli.py`의 명령을 사람이 실행할 때만 일어난다. 운영 DB에 붙어 있으므로 자동 DDL은 남의 데이터를 위협한다. `lifespan`에 DDL을 되살리지 말 것.
+
+**시드 함수는 대부분 early-return한다. 새 시드를 그 안에 넣지 말 것.** `_seed_users`는 사용자가 하나라도 있으면 맨 위에서 돌아선다(`_seed_cards`·`_seed_trips`도 `_is_seeded`로 같은 일을 한다). 새로 만들 데이터를 그 함수 **안**에 추가하면 **빈 스키마에서 시작하는 테스트만 통과하고 이미 시드된 운영 DB에서는 영원히 실행되지 않는다.** 2026-08-22의 승인 대기 계정이 실제로 그렇게 나갔고, 운영 DB를 눈으로 보고서야 발견했다. 새 시드 블록은 `_seed_pending_signup`처럼 **자기 존재 검사를 가진 별도 함수**로 만들어 `seed_all`이 직접 부른다. 회귀 테스트는 "해당 행을 지우고 다시 시드해 재생성되는가"로 쓴다 — 그래야 early-return 안으로 되돌아가는 변경이 잡힌다.
 
 **테스트는 별도 스키마에서 돈다.** `TEST_DB_SCHEMA`(기본 `skon_test`)가 `DB_SCHEMA`와 같으면 픽스처가 실행을 거부한다. 매 세션 `drop_all`을 돌리기 때문이다. 이 가드를 제거하지 말 것.
 
@@ -125,12 +157,17 @@ Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 
 
 2026-08-21의 `user` 테이블 `public` 이동도 같은 경우다. 실행할 SQL은 `docs/migrations/2026-08-21-user-table-to-public.sql`이며 **코드 머지와 별개로 사람이 psql로 한 번 돌려야 한다.** 안 돌리면 앱이 없는 `public."user"`를 찔러 로그인부터 500이 난다.
 
+2026-08-22의 `status` 컬럼 추가와 `employee_no`·`position_code` NOT NULL 해제도 같은 경우다.
+실행할 SQL은 `docs/migrations/2026-08-22-user-signup-status.sql`이며 **코드 머지와 별개로
+사람이 psql로 한 번 돌려야 한다.** 안 돌리면 없는 `status` 컬럼을 찔러 로그인부터 500이 난다.
+(2026-08-22 운영 DB 실행 완료.)
+
 ## 이월 항목
 
 `docs/phase-status.md`의 "Phase 5에서 넘어온 항목"과 "후속 수정" 절을 읽을 것. 요약하면:
 
-- **브라우저 수동 시나리오 40건 미확인.** Phase 4·5의 화면 7개와 이번 모달은 **렌더 확인이 전혀 안 됐다** — 타입체크·빌드·테스트·curl만 통과한 상태다.
-- **운영 DB의 스키마 변경은 코드 머지와 별개로 사람이 돌려야 한다.** 안 돌리면 새 출장 생성이 NOT NULL 위반으로 500이 된다.
+- **브라우저 수동 시나리오 54건 미확인.** Phase 4·5의 화면 7개, 정산 카드내역 모달, 그리고 가입·승인 화면 2개가 **렌더 확인이 전혀 안 됐다** — 타입체크·빌드·테스트·curl만 통과한 상태다. 가입·승인은 API 흐름 18건을 터널로 실측했지만 화면은 별개다.
+- **운영 DB의 스키마 변경은 코드 머지와 별개로 사람이 돌려야 한다.** 안 돌리면 새 출장 생성이 NOT NULL 위반으로 500이 되고, `status` 컬럼이 없으면 로그인부터 500이 된다. 2026-08-21·08-22 두 건은 실행 완료다.
 - `last_used_at`을 API Key 요청마다 갱신(UPDATE + COMMIT)한다. 트래픽이 늘면 스로틀로 옮긴다.
 - 키 발급·폐기와 Admin 마스터 변경은 `activity_log`에 남지 않는다(`EntityType`에 멤버가 없다).
 - 출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다. Admin 목록도 페이징 UI 없이 `size=100`이다.

@@ -12,7 +12,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import ExpenseReportStatus, TripStatus, UserRole
+from app.enums import ExpenseReportStatus, TripStatus, UserRole, UserStatus
 from app.models import (
     ApiKey,
     CardTransaction,
@@ -51,6 +51,8 @@ async def make_user(
     role: UserRole = UserRole.EMPLOYEE,
     manager: User | None = None,
     name: str = "박출장",
+    status: UserStatus = UserStatus.ACTIVE,
+    is_active: bool = True,
 ) -> User:
     # app/seed.py의 _seed_users와 같은 순서: 명시적 department > manager의 department > 새로 생성.
     # 그래야 팩토리로 만든 조직도 seed와 같은 모양(매니저와 보고자가 같은 부서)이 된다.
@@ -70,6 +72,8 @@ async def make_user(
         position_code="STAFF",
         role=role,
         manager_id=manager.id if manager else None,
+        status=status,
+        is_active=is_active,
     )
     session.add(user)
     await session.flush()

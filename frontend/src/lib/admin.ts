@@ -1,4 +1,4 @@
-import type { Department, UserRole } from '$lib/api/types';
+import type { Department, UserRole, UserStatus } from '$lib/api/types';
 
 /** Admin 서브탭. `/admin` 레이아웃이 그린다. */
 export const ADMIN_TABS = [
@@ -13,6 +13,12 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 	EMPLOYEE: '사원',
 	MANAGER: '결재자',
 	ADMIN: '관리자'
+};
+
+export const STATUS_LABELS: Record<UserStatus, string> = {
+	PENDING: '승인 대기',
+	ACTIVE: '활성',
+	REJECTED: '거절됨'
 };
 
 export function activeLabel(isActive: boolean): string {
