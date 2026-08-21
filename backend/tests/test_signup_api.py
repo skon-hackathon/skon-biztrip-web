@@ -1,6 +1,5 @@
 """가입 API. 미인증 경로이므로 토큰 없이 호출한다."""
 
-import pytest
 from sqlalchemy import select
 
 from app.enums import UserStatus
@@ -108,6 +107,7 @@ async def test_signup_conflicts_with_pending_email(client, db_session):
     """대기 중인 신청은 덮어쓰지 않는다 — 계정 탈취 경로가 된다."""
     user = await make_user(db_session, status=UserStatus.PENDING, is_active=False)
     original_hash = user.password_hash
+    original_name = user.name
     await db_session.commit()
 
     response = await client.post(
@@ -124,10 +124,24 @@ async def test_signup_conflicts_with_pending_email(client, db_session):
 
     await db_session.refresh(user)
     assert user.password_hash == original_hash  # 비밀번호가 덮이지 않았다
+    assert user.name == original_name  # 이름도 덮이지 않았다
 
 
 async def test_signup_resubmits_after_rejection(client, db_session):
-    user = await make_user(db_session, status=UserStatus.REJECTED, is_active=False)
+    """거절된 신청자가 다른 부서로 재신청하는 경우 — 이 기능의 정상 케이스다.
+
+    같은 department_id로 재신청을 posting하면 `existing.department_id = payload.department_id`
+    줄이 아무것도 바꾸지 않아도 테스트가 통과하므로, 반드시 다른 부서를 써야 그 줄이
+    실제로 검증된다. is_active도 원래 True로 시작해야 `= False` 대입이 load-bearing해진다.
+    """
+    original_department = await make_department(db_session, name="원래부서")
+    other_department = await make_department(db_session, name="새부서")
+    user = await make_user(
+        db_session,
+        department=original_department,
+        status=UserStatus.REJECTED,
+        is_active=True,
+    )
     original_hash = user.password_hash
     await db_session.commit()
 
@@ -137,7 +151,7 @@ async def test_signup_resubmits_after_rejection(client, db_session):
             "email": user.email,
             "password": _PW,
             "name": "재신청",
-            "department_id": user.department_id,
+            "department_id": other_department.id,
         },
     )
     assert response.status_code == 201
@@ -146,6 +160,7 @@ async def test_signup_resubmits_after_rejection(client, db_session):
     await db_session.refresh(user)
     assert user.status is UserStatus.PENDING
     assert user.is_active is False
+    assert user.department_id == other_department.id
     assert user.name == "재신청"
     assert user.password_hash != original_hash
 
