@@ -89,3 +89,24 @@ async def test_assert_unique_allows_a_new_value(db_session):
         )
         is None
     )
+
+
+async def test_assert_department_rejects_missing(db_session):
+    import pytest
+
+    from app.errors import ValidationError
+    from app.services.admin.common import assert_department
+
+    with pytest.raises(ValidationError) as exc:
+        await assert_department(db_session, 999999)
+    assert exc.value.code == "INVALID_DEPARTMENT"
+    assert exc.value.field == "department_id"
+
+
+async def test_assert_department_accepts_existing(db_session):
+    from app.services.admin.common import assert_department
+    from tests.factories import make_department
+
+    department = await make_department(db_session)
+    await db_session.flush()
+    await assert_department(db_session, department.id)  # 예외가 나지 않으면 통과

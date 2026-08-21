@@ -81,3 +81,44 @@ async def test_centers_can_link_to_department(db_session):
     cc = (await db_session.execute(select(CostCenter).where(CostCenter.code == "CC2030"))).scalar_one()
     assert fc.department_id == dept.id
     assert cc.is_active is True
+
+
+async def test_user_status_defaults_to_active(db_session):
+    from app.enums import UserStatus
+    from tests.factories import make_user
+
+    user = await make_user(db_session)
+    await db_session.flush()
+    assert user.status == UserStatus.ACTIVE
+
+
+async def test_user_allows_null_employee_no_and_position(db_session):
+    # 가입 시점에는 사번·직급이 없다. 임시값을 넣지 않고 NULL로 둔다 —
+    # 가짜 사번이 상대 프로젝트와 Agent API에 실제 값처럼 노출되지 않게 하려는 것이다.
+    from sqlalchemy import select
+
+    from app.enums import UserStatus
+    from app.models import Department, User
+
+    department = Department(code="D900", name="가입대기부서")
+    db_session.add(department)
+    await db_session.flush()
+
+    user = User(
+        email="pending@skon.example",
+        password_hash="x",
+        name="가입자",
+        employee_no=None,
+        department_id=department.id,
+        position_code=None,
+        status=UserStatus.PENDING,
+        is_active=False,
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    found = await db_session.scalar(select(User).where(User.email == "pending@skon.example"))
+    assert found is not None
+    assert found.employee_no is None
+    assert found.position_code is None
+    assert found.status == UserStatus.PENDING

@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import ExpenseReportStatus, TripStatus, UserRole
+from app.enums import ExpenseReportStatus, TripStatus, UserRole, UserStatus
 from app.models import (
     CardTransaction,
     Code,
@@ -264,7 +264,39 @@ async def _seed_users(session: AsyncSession, depts: dict[str, Department]) -> li
         session.add(employee)
         employees.append(employee)
     await session.flush()
+
     return [admin, *managers, *employees]
+
+
+async def _seed_pending_signup(session: AsyncSession, depts: dict[str, Department]) -> None:
+    """승인 화면 시연용 대기 계정.
+
+    `_seed_users` 안에 두지 않는 이유: 그 함수는 사용자가 하나라도 있으면 맨 위에서
+    early-return한다. 안에 넣으면 **이미 시드된 DB에서는 영원히 실행되지 않는다** —
+    테스트는 빈 스키마에서 시작하므로 통과하고, 운영에서만 조용히 빠진다. 실제로 한 번
+    그렇게 됐다.
+
+    반환값이 없는 것도 의도다. 이 계정은 승인 전이라 카드·출장을 받으면 안 되므로
+    `_seed_users`의 반환 목록에 섞이지 않는다.
+    """
+    email = "newbie@skon.example"
+    if await session.scalar(select(User).where(User.email == email)) is not None:
+        return
+    session.add(
+        User(
+            email=email,
+            password_hash=hash_password(DEFAULT_PASSWORD),
+            name="신입가입",
+            employee_no=None,
+            department_id=depts["D100"].id,
+            position_code=None,
+            manager_id=None,
+            role=UserRole.EMPLOYEE,
+            status=UserStatus.PENDING,
+            is_active=False,
+        )
+    )
+    await session.flush()
 
 
 async def _seed_cards(session: AsyncSession, users: list[User], rng: random.Random) -> None:
@@ -480,6 +512,8 @@ async def seed_all(session: AsyncSession) -> None:
     depts = await _seed_org(session)
     await _seed_centers(session, depts)
     users = await _seed_users(session, depts)
+    # _seed_users의 early-return 바깥에서 부른다. 안에 두면 이미 시드된 DB에서 안 돈다.
+    await _seed_pending_signup(session, depts)
     # 블록마다 독립 시드를 쓴다. 공용 rng 하나를 돌려쓰면 앞 블록이 early-return으로
     # 난수를 소비하지 않았을 때 뒤 블록 결과가 통째로 달라진다.
     await _seed_cards(session, users, random.Random(f"{RNG_SEED}-cards"))

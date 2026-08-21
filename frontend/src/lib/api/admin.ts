@@ -11,7 +11,8 @@ import type {
 	CenterKind,
 	Department,
 	DepartmentInput,
-	Page
+	Page,
+	UserApproveInput
 } from './types';
 
 // --- 부서 -------------------------------------------------------------------
@@ -121,7 +122,7 @@ export function deleteCenter(kind: CenterKind, id: number): Promise<void> {
 // --- 사용자 -----------------------------------------------------------------
 
 export function listUsers(
-	query: { q?: string; page?: number; size?: number } = {}
+	query: { q?: string; status?: string; page?: number; size?: number } = {}
 ): Promise<Page<AdminUser>> {
 	return authRequest<Page<AdminUser>>(`/api/v1/admin/users${toQueryString(query)}`);
 }
@@ -139,6 +140,17 @@ export function setUserPassword(id: number, password: string): Promise<void> {
 		method: 'POST',
 		body: { password }
 	});
+}
+
+export function approveUser(id: number, input: UserApproveInput): Promise<AdminUser> {
+	return authRequest<AdminUser>(`/api/v1/admin/users/${id}/approve`, {
+		method: 'POST',
+		body: input
+	});
+}
+
+export function rejectUser(id: number): Promise<AdminUser> {
+	return authRequest<AdminUser>(`/api/v1/admin/users/${id}/reject`, { method: 'POST' });
 }
 
 // --- 법인카드 ---------------------------------------------------------------
