@@ -1,7 +1,7 @@
 from sqlalchemy import Boolean, Enum as SAEnum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.enums import UserRole
+from app.enums import UserRole, UserStatus
 from app.models.base import USER_FK, USER_SCHEMA, Base, TimestampMixin
 
 
@@ -26,12 +26,15 @@ class User(Base, TimestampMixin):
     email: Mapped[str] = mapped_column(String(120), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(200), nullable=False)
     name: Mapped[str] = mapped_column(String(50), nullable=False)
-    employee_no: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    # 가입 신청 시점에는 값이 없어 NULL이다. ACTIVE로의 승인이 값을 강제한다
+    # (services/admin/users.py의 approve_user). unique는 유지한다 — Postgres에서
+    # NULL은 서로 충돌하지 않으므로 대기 행이 여럿이어도 문제가 없다.
+    employee_no: Mapped[str | None] = mapped_column(String(20), unique=True)
     # 부서는 이 프로젝트 스키마에 남는다. 공유 테이블이 우리 스키마를 역참조하면 상대
     # 프로젝트가 계정을 만들 때 우리 department 행이 있어야 하므로 FK 제약은 두지 않고,
     # 존재 검증은 서비스가 한다(services/admin/users.py의 _assert_department).
     department_id: Mapped[int] = mapped_column(nullable=False)
-    position_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    position_code: Mapped[str | None] = mapped_column(String(30))
     manager_id: Mapped[int | None] = mapped_column(ForeignKey(USER_FK))
     role: Mapped[UserRole] = mapped_column(
         # 공유 테이블이므로 PostgreSQL enum 타입을 쓰지 않는다. 상대 프로젝트가 우리
@@ -39,6 +42,14 @@ class User(Base, TimestampMixin):
         # 같은 멤버명 문자열('EMPLOYEE' 등)이고 검증은 Python Enum이 한다.
         SAEnum(UserRole, name="user_role", native_enum=False, length=20),
         default=UserRole.EMPLOYEE,
+        nullable=False,
+    )
+    status: Mapped[UserStatus] = mapped_column(
+        # role과 같은 이유로 PG enum을 쓰지 않는다 — 공유 테이블이므로 상대 프로젝트가
+        # 우리 스키마의 타입 이름에 묶이면 안 된다.
+        SAEnum(UserStatus, name="user_status", native_enum=False, length=20),
+        default=UserStatus.ACTIVE,
+        server_default=UserStatus.ACTIVE.value,
         nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
