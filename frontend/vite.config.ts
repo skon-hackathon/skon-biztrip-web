@@ -6,6 +6,8 @@ export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
 	server: {
 		port: 5173,
+		host: true,
+		allowedHosts: ['biztrip.find-your-partners.xyz', 'lgnamkon.iptime.org', 'localhost', '127.0.0.1'],
 		proxy: {
 			'/api': { target: 'http://localhost:8000', changeOrigin: true }
 		}
