@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.enums import UserRole
+from app.enums import UserRole, UserStatus
 
 # --- 부서 -------------------------------------------------------------------
 
@@ -140,6 +140,19 @@ class AdminUserUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class UserApprove(BaseModel):
+    """가입 승인 시 관리자가 채우는 조직 정보.
+
+    전부 필수다(manager_id 제외). 이 값들이 있어야 ACTIVE가 될 수 있고,
+    그 강제가 컬럼 NOT NULL 대신 여기와 서비스에 있다.
+    """
+
+    employee_no: str = Field(min_length=1, max_length=20)
+    position_code: str = Field(min_length=1, max_length=30)
+    manager_id: int | None = None
+    role: UserRole = UserRole.EMPLOYEE
+
+
 class PasswordSet(BaseModel):
     password: str = Field(min_length=1)
 
@@ -148,13 +161,15 @@ class AdminUserOut(BaseModel):
     id: int
     email: str
     name: str
-    employee_no: str
+    # 가입 대기 계정은 아직 값이 없다. 승인이 값을 채운다.
+    employee_no: str | None
     department_id: int
     department_name: str
-    position_code: str
+    position_code: str | None
     manager_id: int | None
     manager_name: str | None
     role: UserRole
+    status: UserStatus
     is_active: bool
 
 

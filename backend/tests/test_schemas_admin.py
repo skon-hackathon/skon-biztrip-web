@@ -54,3 +54,49 @@ def test_admin_user_create_defaults_to_employee():
     assert payload.role is UserRole.EMPLOYEE
     assert payload.is_active is True
     assert payload.manager_id is None
+
+
+def test_admin_user_out_allows_null_employee_no():
+    from app.enums import UserRole, UserStatus
+    from app.schemas.admin import AdminUserOut
+
+    out = AdminUserOut(
+        id=1,
+        email="a@b.com",
+        name="가입자",
+        employee_no=None,
+        department_id=1,
+        department_name="부서",
+        position_code=None,
+        manager_id=None,
+        manager_name=None,
+        role=UserRole.EMPLOYEE,
+        status=UserStatus.PENDING,
+        is_active=False,
+    )
+    assert out.employee_no is None
+    assert out.status is UserStatus.PENDING
+
+
+def test_admin_user_update_has_no_status_field():
+    # status는 전이 엔드포인트만 바꾼다. PATCH로 바꿀 수 있으면 전이 가드를
+    # 우회하는 두 번째 경로가 생긴다.
+    from app.schemas.admin import AdminUserUpdate
+
+    assert "status" not in AdminUserUpdate.model_fields
+
+
+def test_user_approve_requires_employee_no_and_position():
+    import pytest
+    from pydantic import ValidationError as PydanticValidationError
+
+    from app.schemas.admin import UserApprove
+
+    with pytest.raises(PydanticValidationError):
+        UserApprove(position_code="STAFF")
+    with pytest.raises(PydanticValidationError):
+        UserApprove(employee_no="E0100")
+
+    approved = UserApprove(employee_no="E0100", position_code="STAFF")
+    assert approved.manager_id is None
+    assert approved.role.value == "EMPLOYEE"
