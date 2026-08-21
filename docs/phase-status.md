@@ -1,8 +1,8 @@
 # Phase 현황 — 완료분과 다음 작업
 
-- 기준: Phase 5 (운영) 완료 + 후속 수정(2026-08-20) 시점
+- 기준: Phase 5 (운영) 완료 + 후속 수정(2026-08-22 가입·승인) 시점
 - 설계: [`superpowers/specs/2026-08-12-skon-biztrip-web-design.md`](superpowers/specs/2026-08-12-skon-biztrip-web-design.md)
-- 후속 수정 설계: [`superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md`](superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md)
+- 후속 수정 설계: [`superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md`](superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md) · [`superpowers/specs/2026-08-22-signup-approval-design.md`](superpowers/specs/2026-08-22-signup-approval-design.md)
 - Phase 1 계획: [`superpowers/plans/2026-08-12-phase1-foundation.md`](superpowers/plans/2026-08-12-phase1-foundation.md)
 - Phase 2 계획: [`superpowers/plans/2026-08-17-phase2-trips.md`](superpowers/plans/2026-08-17-phase2-trips.md)
 - Phase 3 계획: [`superpowers/plans/2026-08-18-phase3-expenses.md`](superpowers/plans/2026-08-18-phase3-expenses.md)
@@ -18,8 +18,9 @@
 | 4 | 개발자 — API Key·스코프·`/developers` 가이드 | 완료 |
 | 5 | 운영 — Admin CRUD, 반응형, 배포 검증 | 완료 |
 | — | 후속 수정 — 출장 필드 축소, 정산 카드내역 피커 | **완료** |
+| — | 후속 수정 — 가입·승인 | **완료** |
 
-**테스트**: 백엔드 569건 · 프론트 73건 · 타입체크 0 errors / 0 warnings · 빌드 성공
+**테스트**: 백엔드 621건 · 프론트 74건 · 타입체크 0 errors / 0 warnings · 빌드 성공
 
 ---
 
@@ -541,6 +542,30 @@ target backend: failed to solve: DeadlineExceeded: context deadline exceeded
 - 상대 프로젝트가 만든 계정은 우리 필수 컬럼(`employee_no`·`department_id`·`position_code`)을 채워야 우리 화면에서 정상으로 보인다. 부서가 없는 id면 Admin 목록의 부서명이 빈 문자열로 나온다(500은 아니다).
 - 두 프로젝트가 `JWT_SECRET`을 공유하므로 **한쪽에서 SECRET이 새면 양쪽 세션이 함께 뚫린다.** 데모 종료 후 회전할 것.
 - 브라우저 확인은 안 했다. 로그인·Admin 사용자 CRUD·부서 삭제 409는 화면에서 아직 안 돌려봤다.
+
+## 후속 수정 — 가입·승인 (2026-08-22)
+
+`UserStatus`(PENDING/ACTIVE/REJECTED) 추가 + 셀프 가입(`/signup`) + 관리자 승인/거절. `user`가 승인
+전에는 사번·직급·결재자·역할 없이 존재할 수 있어야 해서 세 컬럼이 nullable로 바뀌었다
+(`employee_no`·`position_code`·신규 `status`). 마이그레이션 SQL은
+[`migrations/2026-08-22-user-signup-status.sql`](migrations/2026-08-22-user-signup-status.sql)이며
+**운영 DB에 실행 완료했다.**
+
+### 후속 수정
+
+- `POST /api/v1/auth/signup`은 **미인증 쓰기 엔드포인트이며 rate limit이 없다.** 익명 호출자가
+  공유 테이블 `public."user"`에 행을 무한히 넣을 수 있다. CPU는 문제가 아니다 — `/auth/login`이
+  이미 미스에도 bcrypt를 태우므로 새 DoS 표면은 아니다. 실제 피해는 승인 큐다: `/admin/users`는
+  페이징 UI 없이 `size=100`이라 대기 행이 수천 개면 승인 화면이 못 쓰게 되고 진짜 신청자가
+  묻힌다. 데모 범위로 의도한 생략이며, 외부에 오래 열어둘 것이면 `count(*) where status='PENDING'`
+  상한으로 429/409를 돌려주는 값싼 완화부터 붙인다.
+- 가입·승인·거절이 `activity_log`에 남지 않는다. `EntityType`에 `USER` 멤버가 없다 —
+  키 발급·Admin 마스터 변경이 로그에 남지 않는 기존 항목과 같은 건이다.
+- `GET /api/v1/auth/departments`는 미인증으로 부서명을 노출한다. 가입 폼의 드롭다운 때문이며
+  의도된 노출이다.
+- **브라우저 수동 시나리오 14건 신규 미확인.** `/signup`·`/admin/users`의 승인 모달 모두 렌더
+  확인이 전혀 안 됐다 — 타입체크·빌드·테스트만 통과한 상태다. 목록은
+  [`manual-scenarios.md`](manual-scenarios.md)의 "가입·승인 신규" 절.
 
 ## 이후 Phase
 

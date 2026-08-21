@@ -32,7 +32,7 @@ class User(Base, TimestampMixin):
     employee_no: Mapped[str | None] = mapped_column(String(20), unique=True)
     # 부서는 이 프로젝트 스키마에 남는다. 공유 테이블이 우리 스키마를 역참조하면 상대
     # 프로젝트가 계정을 만들 때 우리 department 행이 있어야 하므로 FK 제약은 두지 않고,
-    # 존재 검증은 서비스가 한다(services/admin/users.py의 _assert_department).
+    # 존재 검증은 서비스가 한다(app/services/admin/common.py의 assert_department).
     department_id: Mapped[int] = mapped_column(nullable=False)
     position_code: Mapped[str | None] = mapped_column(String(30))
     manager_id: Mapped[int | None] = mapped_column(ForeignKey(USER_FK))
