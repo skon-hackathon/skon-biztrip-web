@@ -1,5 +1,4 @@
 from datetime import date
-from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -22,10 +21,6 @@ def _payload(**overrides) -> TripCreate:
         "city": "울산",
         "start_date": date(2026, 9, 1),
         "end_date": date(2026, 9, 3),
-        "transport_code": "RAIL",
-        "accommodation_code": "HOTEL",
-        "cost_center_code": "CC2030",
-        "estimated_cost": Decimal("450000"),
     }
     values.update(overrides)
     return TripCreate.model_validate(values)
@@ -60,20 +55,22 @@ async def test_create_rejects_unknown_code_value(db_session):
     user = await make_user(db_session)
 
     with pytest.raises(ValidationError) as exc_info:
-        await create_trip(db_session, user=user, payload=_payload(transport_code="ROCKET"))
+        await create_trip(db_session, user=user, payload=_payload(purpose_code="PICNIC"))
 
     assert exc_info.value.code == "INVALID_CODE"
-    assert exc_info.value.field == "transport_code"
+    assert exc_info.value.field == "purpose_code"
 
 
-async def test_create_rejects_unknown_cost_center(db_session):
+async def test_create_leaves_cost_center_empty(db_session):
+    """출장 신청은 코스트센터를 받지 않는다. 정산서 생성이 이 값을 승계하므로 비어 있고,
+    사용자가 정산 화면에서 고른다 — 제출 시 assert_centers_present가 빈 값을 거부한다."""
     await make_trip_master_data(db_session)
     user = await make_user(db_session)
 
-    with pytest.raises(ValidationError) as exc_info:
-        await create_trip(db_session, user=user, payload=_payload(cost_center_code="CC0000"))
+    detail = await create_trip(db_session, user=user, payload=_payload())
 
-    assert exc_info.value.code == "INVALID_COST_CENTER"
+    assert detail.cost_center_code is None
+    assert detail.cost_center_name is None
 
 
 async def test_create_rejects_end_before_start(db_session):
@@ -88,30 +85,6 @@ async def test_create_rejects_end_before_start(db_session):
         )
 
     assert exc_info.value.code == "INVALID_DATE_RANGE"
-
-
-async def test_create_rejects_negative_estimated_cost(db_session):
-    await make_trip_master_data(db_session)
-    user = await make_user(db_session)
-
-    with pytest.raises(ValidationError) as exc_info:
-        await create_trip(db_session, user=user, payload=_payload(estimated_cost=Decimal("-1")))
-
-    assert exc_info.value.code == "INVALID_AMOUNT"
-
-
-async def test_create_rejects_amount_that_would_overflow_the_column(db_session):
-    """Numeric(14, 2)를 넘는 값은 400으로 막는다. 통과시키면 flush에서 500이 되고,
-    Agent는 5xx를 재시도하므로 성공할 수 없는 요청에 재시도 루프가 걸린다."""
-    await make_trip_master_data(db_session)
-    user = await make_user(db_session)
-
-    with pytest.raises(ValidationError) as exc_info:
-        await create_trip(
-            db_session, user=user, payload=_payload(estimated_cost=Decimal("1000000000000"))
-        )
-
-    assert exc_info.value.code == "INVALID_AMOUNT"
 
 
 async def test_create_numbers_trips_sequentially(db_session):

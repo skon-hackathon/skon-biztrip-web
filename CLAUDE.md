@@ -5,7 +5,7 @@ SK온 사내 출장시스템을 모사한 데모 웹. 실제 회계·전표 처�
 - 설계: `docs/superpowers/specs/2026-08-12-skon-biztrip-web-design.md`
 - 구현 계획: `docs/superpowers/plans/` — Phase별로 하나씩. **작업 전 해당 Phase plan을 읽을 것.**
 - Phase 현황·이월 항목: `docs/phase-status.md` — **새 Phase를 시작하기 전에 읽을 것.**
-- 브라우저 수동 시나리오: `docs/manual-scenarios.md` — 33건 미확인. 화면을 건드렸으면 해당 항목을 돌리고 체크한다.
+- 브라우저 수동 시나리오: `docs/manual-scenarios.md` — 40건 미확인. 화면을 건드렸으면 해당 항목을 돌리고 체크한다.
 - 디자인 규칙: `DESIGN.md`
 
 Phase 1(기반)·Phase 2(출장)·Phase 3(정산)·Phase 4(개발자)·Phase 5(운영) 완료.
@@ -52,7 +52,7 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **스키마명은 DDL에 문자열 보간된다.** 바인드 파라미터로 넘길 수 없어서다. 그래서 `app/config.py`의 `assert_safe_identifier`로 평범한 식별자만 통과시킨다. 새로 스키마명을 받는 경로를 만들면 같은 검증을 통과시킬 것.
 
-**공통코드는 문자열로 저장한다.** `trip.transport_code = 'AIR'`처럼 코드값 문자열을 쓰고 `code.id` FK를 쓰지 않는다. API가 `"transport_code": "AIR"`로 읽혀 Agent가 그대로 쓸 수 있게 하려는 의도다. 대가로 DB 무결성이 없으므로 **모든 쓰기 경로가 `app/services/codes.py`의 검증을 통과해야 한다.**
+**공통코드는 문자열로 저장한다.** `trip.purpose_code = 'AUDIT'`처럼 코드값 문자열을 쓰고 `code.id` FK를 쓰지 않는다. API가 `"purpose_code": "AUDIT"`로 읽혀 Agent가 그대로 쓸 수 있게 하려는 의도다. 대가로 DB 무결성이 없으므로 **모든 쓰기 경로가 `app/services/codes.py`의 검증을 통과해야 한다.**
 
 **상태·역할 enum은 DB로 빼지 않는다.** `TripStatus` · `ExpenseReportStatus` · `UserRole` · `ApiKeyScope` 등은 분기 로직에 박히므로 `app/enums.py`의 Python Enum으로 고정한다. 공통코드 테이블은 관리자가 편집하는 드롭다운 값 전용이다.
 
@@ -68,7 +68,9 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **정산 합계는 서비스가 재계산한다.** `expense_report.total_amount_krw`는 비정규화 값이고 `is_excluded` 항목은 빼고 더한다(`_recalc_total`). 항목 상한(`MAX_ITEM_AMOUNT`)만으로는 항목 여러 개로 컬럼을 넘길 수 있으므로 합계 상한(`MAX_REPORT_TOTAL`)도 함께 본다. 자릿수는 `quantize(0.01)`로 고정해 응답 문자열 모양이 갈리지 않게 한다.
 
-**금액은 컬럼 상한까지 서비스가 막는다.** `Numeric(14, 2)`를 넘는 값을 통과시키면 flush에서 Postgres numeric overflow가 나고 catch-all 핸들러에 걸려 **500**이 된다. Agent는 5xx를 재시도하므로 절대 성공할 수 없는 요청에 재시도 루프가 걸린다. `trip_rules.MAX_ESTIMATED_COST`가 그 방어선이다.
+**금액은 컬럼 상한까지 서비스가 막는다.** `Numeric(14, 2)`를 넘는 값을 통과시키면 flush에서 Postgres numeric overflow가 나고 catch-all 핸들러에 걸려 **500**이 된다. Agent는 5xx를 재시도하므로 절대 성공할 수 없는 요청에 재시도 루프가 걸린다. `expense_rules`의 `MAX_ITEM_AMOUNT`·`MAX_REPORT_TOTAL`이 그 방어선이다. 금액 컬럼을 새로 만들면 같은 방어선을 함께 만든다.
+
+**출장은 이동수단·숙박유형·예상비용을 받지 않는다.** 신청 시점에 확정되지 않는 값이라 강제하면 아무 값이나 고른다. 코스트센터는 컬럼만 nullable로 남아 있다 — 정산서 생성이 이 값을 승계하지만(`services/expenses.py`), 신청에서 받지 않으므로 새 출장은 `None`이고 사용자가 정산 화면에서 고른다. 제출 시 `assert_centers_present`가 빈 CC를 거부하므로 검증은 신청에서 정산 제출로 옮겨갔을 뿐 빠지지 않았다. 공통코드 그룹 `TRANSPORT`·`ACCOMMODATION`은 관리자 코드 관리 화면의 데이터로 남아 있다.
 
 **스코프 검사는 `get_principal` 안 한 곳에서만 한다.** 엔드포인트마다 `Depends(require_scope(...))`를 붙이는 방식은 쓰지 않는다 — 빠뜨리면 그 엔드포인트만 조용히 전권이 되는 fail-open이다. 필요 스코프는 `app/services/api_scopes.py`의 `SCOPE_REQUIREMENTS` 표가 유일하게 선언하며, `main.py`가 임포트 시점에 `assert_scope_table_complete(app)`로 표와 실제 라우트를 **양방향** 대조한다. **새 엔드포인트를 만들면 같은 커밋에서 표에 넣어야 하고, 빠뜨리면 앱이 뜨지 않는다.** 표에 없는 경로는 통과가 아니라 403이다.
 
@@ -92,6 +94,8 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 **`text-body` 클래스를 쓰지 않는다.** `--color-body` 때문에 Tailwind가 이걸 **색상** 유틸리티로 생성한다. 본문 타이포는 `text-body-md` / `text-body-sm`으로 명시한다. 에러가 나지 않고 조용히 틀린다.
 
+**모달은 `Modal.svelte`(`<dialog>` + `showModal()`)를 쓴다.** 직접 오버레이 div를 그리면 포커스 트랩과 Esc 닫기를 손으로 만들어야 하고 대개 빠뜨린다. `<dialog>`는 SecureContext 전용이 아니라 평문 HTTP 운영에서도 동작한다. 백드롭 클릭 판정은 `event.target === dialog`로만 한다 — 백드롭 클릭도 dialog 자신의 click으로 오기 때문이다.
+
 **SecureContext 전용 API를 쓰지 않는다.** 운영은 평문 HTTP로 서빙되므로 `crypto.randomUUID()` 같은 API는 존재하지 않아 페이지 전체가 렌더에 실패한다. 로컬(localhost)에서는 멀쩡해 보여 발견이 늦다. 고유 id는 Svelte의 `$props.id()`를 쓴다.
 
 **새 폼에는 중복 제출 가드를 넣는다.** 버튼의 `disabled`만으로는 `form.requestSubmit()` 경로를 막지 못한다. `handleSubmit` 첫 줄에 `if (submitting) return;`. 출장 신청·정산 제출은 멱등하지 않아 중복 POST가 곧 중복 레코드다.
@@ -111,20 +115,21 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 ## 마이그레이션
 
-Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 기존 테이블의 컬럼 변경은 반영하지 않는다. 스키마를 바꾸면 해당 테이블을 지우고 `init-db`를 다시 돌린다.
+Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 기존 테이블의 컬럼 변경은 반영하지 않는다.
 
-## 다음 Phase로 넘어간 항목
+컬럼을 바꾸면 두 길 중 하나다. **참조하는 테이블이 없으면** 해당 테이블을 지우고 `init-db`를 다시 돌린다. **다른 테이블이 FK로 참조하면**(예: `expense_report.trip_id` → `trip`) 테이블을 드롭할 수 없으므로 손으로 `ALTER TABLE`을 돌린다 — 드롭하면 참조하는 쪽 데이터가 함께 사라진다. 2026-08-20의 출장 필드 제거가 그 경우였고, 문장은 `docs/superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md`에 있다.
 
-`docs/phase-status.md`의 "Phase 4에서 넘어온 항목" 절을 **Phase 5 착수 전에** 읽을 것. 요약하면:
+## 이월 항목
 
-- `/admin/*`을 만들면 `SCOPE_REQUIREMENTS`에 `ApiKeyScope.ADMIN`으로 등록해야 한다. 빠뜨리면 기동 실패다.
-- Admin 삭제는 `IntegrityError`를 409 `HAS_DEPENDENTS`로 변환해야 한다. 안 하면 500이 되고 Agent가 재시도한다.
-- 비밀번호 엔드포인트를 만들면 요청 스키마에서 72바이트를 막아야 한다(bcrypt 5.x는 자르지 않고 던지며, 한글은 24자면 넘는다).
-- **브라우저 수동 시나리오 23개 미확인.** Phase 4 화면 2개(`/settings/api-keys`·`/developers`)는 렌더 확인이 전혀 안 됐다 — 타입체크·빌드·curl만 통과한 상태다.
+`docs/phase-status.md`의 "Phase 5에서 넘어온 항목"과 "후속 수정" 절을 읽을 것. 요약하면:
+
+- **브라우저 수동 시나리오 40건 미확인.** Phase 4·5의 화면 7개와 이번 모달은 **렌더 확인이 전혀 안 됐다** — 타입체크·빌드·테스트·curl만 통과한 상태다.
+- **운영 DB의 스키마 변경은 코드 머지와 별개로 사람이 돌려야 한다.** 안 돌리면 새 출장 생성이 NOT NULL 위반으로 500이 된다.
 - `last_used_at`을 API Key 요청마다 갱신(UPDATE + COMMIT)한다. 트래픽이 늘면 스로틀로 옮긴다.
-- 키 발급·폐기는 `activity_log`에 남지 않는다(`EntityType`에 멤버가 없다).
-- 출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다.
+- 키 발급·폐기와 Admin 마스터 변경은 `activity_log`에 남지 않는다(`EntityType`에 멤버가 없다).
+- 출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다. Admin 목록도 페이징 UI 없이 `size=100`이다.
 - 항목의 FC/CC override는 마스터 비활성화 시점에 재검증되지 않는다.
+- 목록 `q`는 LIKE 와일드카드를 이스케이프하지 않는다. 매칭 후보 조회에 페이징이 없다.
 
 ## 환경 주의
 

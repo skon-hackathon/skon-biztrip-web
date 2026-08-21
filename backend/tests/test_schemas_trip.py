@@ -1,5 +1,4 @@
 from datetime import date
-from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
@@ -19,20 +18,16 @@ def _create_payload(**overrides) -> dict:
         "city": "울산",
         "start_date": "2026-09-01",
         "end_date": "2026-09-03",
-        "transport_code": "RAIL",
-        "accommodation_code": "HOTEL",
-        "cost_center_code": "CC2030",
-        "estimated_cost": "450000",
     }
     payload.update(overrides)
     return payload
 
 
-def test_trip_create_parses_dates_and_decimal():
+def test_trip_create_parses_dates():
     payload = TripCreate.model_validate(_create_payload())
 
     assert payload.start_date == date(2026, 9, 1)
-    assert payload.estimated_cost == Decimal("450000")
+    assert payload.end_date == date(2026, 9, 3)
 
 
 def test_trip_create_rejects_blank_title():
@@ -40,14 +35,15 @@ def test_trip_create_rejects_blank_title():
         TripCreate.model_validate(_create_payload(title=""))
 
 
-def test_trip_create_does_not_constrain_amounts():
-    """금액 제약은 trip_rules.py가 400 + 도메인 코드로 낸다. 여기서 422로 잡히면
-    Agent가 보는 에러 코드가 필드마다 달라진다."""
-    negative = TripCreate.model_validate(_create_payload(estimated_cost="-1"))
-    huge = TripCreate.model_validate(_create_payload(estimated_cost="9" * 30))
-
-    assert negative.estimated_cost == Decimal("-1")
-    assert huge.estimated_cost == Decimal("9" * 30)
+@pytest.mark.parametrize(
+    "field_name",
+    ["transport_code", "accommodation_code", "cost_center_code", "estimated_cost"],
+)
+def test_trip_write_schemas_dropped_fields(field_name):
+    """출장 신청에서 뺀 필드가 되살아나지 않게 잠근다. 되살아나면 화면에 없는 값을
+    API가 요구하게 되고, 코스트센터는 정산 화면이 고르기로 한 결정이 무효가 된다."""
+    assert field_name not in TripCreate.model_fields
+    assert field_name not in TripUpdate.model_fields
 
 
 def test_trip_create_does_not_constrain_date_order():
@@ -82,7 +78,6 @@ def test_page_is_generic_over_the_item_type():
                 start_date=date(2026, 9, 1),
                 end_date=date(2026, 9, 3),
                 status=TripStatus.DRAFT,
-                estimated_cost=Decimal("450000"),
                 user_id=1,
                 user_name="박출장",
                 approver_id=None,

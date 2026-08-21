@@ -20,7 +20,7 @@ spec 10의 5단계가 모두 끝났다.
 | 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰, 출장·결재·알림·대시보드, 법인카드·정산서, API Key 발급 화면, `/developers` 가이드, 관리자 화면 5종, 744px 반응형, 테스트 **73건** |
 | 배포 | Dockerfile 2종, nginx ingress, 3서비스 compose (DB는 스택 밖) |
 
-**동작하는 흐름**: 출장 신청 → 상신 → 결재자 알림 → 결재함 → 승인/반려 → (반려 시) 재작성 → 완료 처리 → 정산서 작성 → 자동매칭으로 카드내역 담기 → 제출 → 결재 → 승인 시 출장이 정산완료로 자동 전이. 모든 전이가 타임라인에 남는다.
+**동작하는 흐름**: 출장 신청 → 상신 → 결재자 알림 → 결재함 → 승인/반려 → (반려 시) 재작성 → 완료 처리 → 정산서 작성 → 자동매칭 또는 카드내역 모달로 카드내역 담기 → 제출 → 결재 → 승인 시 출장이 정산완료로 자동 전이. 모든 전이가 타임라인에 남는다.
 
 ### 화면
 
@@ -37,7 +37,7 @@ spec 10의 5단계가 모두 끝났다.
 /admin/codes · /admin/centers · /admin/departments · /admin/users · /admin/cards   (ADMIN)
 ```
 
-정산 화면은 완료된 출장 상세의 "정산서 작성"으로 진입한다. 자동매칭 후보가 사유와 함께 뜨고, 담은 항목의 부서(FC/CC)는 리포트 기본값을 상속하되 행 단위로 덮어쓸 수 있다.
+정산 화면은 완료된 출장 상세의 "정산서 작성"으로 진입한다. 자동매칭 후보가 사유와 함께 뜨고, 매칭 창(출장 시작 1일 전 ~ 종료 1일 후) 밖의 결제는 "법인카드 사용내역 보기" 모달에서 담는다 — 아직 어떤 정산서에도 담기지 않은 본인 거래가 모두 뜬다. 담은 항목의 부서(FC/CC)는 리포트 기본값을 상속하되 행 단위로 덮어쓸 수 있다.
 
 관리자 화면은 마스터 데이터(공통코드·Fund/Cost Center·부서·사용자·법인카드)를 고친다. 여기서 코드를 비활성화하면 **출장 신청 드롭다운과 API 검증이 함께 바뀐다** — 화면과 Agent가 같은 마스터를 본다.
 
@@ -57,8 +57,7 @@ curl -s -X POST localhost:8000/api/v1/trips -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"title":"울산공장 품질점검","purpose_code":"AUDIT","purpose_detail":"라인 3 확인",
        "destination_type_code":"DOMESTIC","country_code":"KR","city":"울산",
-       "start_date":"2026-10-01","end_date":"2026-10-03","transport_code":"RAIL",
-       "accommodation_code":"HOTEL","cost_center_code":"CC2030","estimated_cost":"300000"}'
+       "start_date":"2026-10-01","end_date":"2026-10-03"}'
 
 curl -s -X POST localhost:8000/api/v1/trips/41/submit -H "Authorization: Bearer $TOKEN"
 

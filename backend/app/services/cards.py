@@ -11,10 +11,10 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import CardTransaction, CorporateCard, User
+from app.models import CardTransaction, CorporateCard, ExpenseItem, User
 from app.schemas.card import CardOut, CardTransactionOut
 from app.schemas.common import Page
-from app.services.matching import KST
+from app.services.matching import KST, suggest_expense_category
 
 
 def _start_of(day: date, *, plus_one: bool = False) -> datetime:
@@ -32,8 +32,26 @@ class CardTxnFilters:
     merchant_category_code: str | None = None
     q: str | None = None
     include_cancelled: bool = False
+    #: 어떤 정산서에도 담기지 않은 거래만 남긴다. 정산서 상태는 보지 않는다 —
+    #: 자동매칭(services/expenses.list_match_candidates)이 쓰는 기준과 같다.
+    unsettled: bool = False
     page: int = 1
     size: int = 20
+
+
+def _to_out(row: CardTransaction) -> CardTransactionOut:
+    return CardTransactionOut(
+        id=row.id,
+        card_id=row.card_id,
+        approved_at=row.approved_at,
+        merchant_name=row.merchant_name,
+        merchant_category_code=row.merchant_category_code,
+        amount=row.amount,
+        currency_code=row.currency_code,
+        amount_krw=row.amount_krw,
+        is_cancelled=row.is_cancelled,
+        suggested_expense_category_code=suggest_expense_category(row.merchant_category_code),
+    )
 
 
 async def load_my_card_ids(session: AsyncSession, user: User) -> list[int]:
@@ -83,6 +101,16 @@ async def list_card_transactions(
         )
     if filters.q:
         conditions.append(CardTransaction.merchant_name.ilike(f"%{filters.q}%"))
+    if filters.unsettled:
+        # 서브쿼리에서 NULL을 반드시 걸러야 한다. NOT IN은 목록에 NULL이 하나라도
+        # 섞이면 전체가 UNKNOWN이 되어 **0건**을 돌려준다 — 조용히 빈 목록이 된다.
+        conditions.append(
+            CardTransaction.id.not_in(
+                select(ExpenseItem.card_transaction_id).where(
+                    ExpenseItem.card_transaction_id.is_not(None)
+                )
+            )
+        )
 
     total = (
         await session.execute(
@@ -103,7 +131,7 @@ async def list_card_transactions(
         .all()
     )
     return Page[CardTransactionOut](
-        items=[CardTransactionOut.model_validate(row) for row in rows],
+        items=[_to_out(row) for row in rows],
         total=total,
         page=filters.page,
         size=filters.size,

@@ -14,11 +14,7 @@
 		country_code: '',
 		city: '',
 		start_date: '',
-		end_date: '',
-		transport_code: '',
-		accommodation_code: '',
-		cost_center_code: '',
-		estimated_cost: ''
+		end_date: ''
 	};
 
 	let values = $state<TripInput>({ ...EMPTY });

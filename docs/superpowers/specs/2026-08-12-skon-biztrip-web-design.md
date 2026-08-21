@@ -149,9 +149,9 @@ cd frontend && npm run dev                          # :5173
 | `COUNTRY` | 국가 (`extra`에 통화·지역 보유) |
 | `CURRENCY` | 통화 |
 
-**참조 방식.** 업무 테이블은 `code.id` 정수 FK가 아니라 **코드값 문자열**을 저장한다 (예: `trip.transport_code = 'AIR'`). 이유는 두 가지다.
+**참조 방식.** 업무 테이블은 `code.id` 정수 FK가 아니라 **코드값 문자열**을 저장한다 (예: `trip.purpose_code = 'AUDIT'`). 이유는 두 가지다.
 
-- API/JSON이 `"transport_code": "AIR"`로 읽혀 Agent가 그대로 사용할 수 있다. 정수 id라면 Agent가 매번 조회 후 치환해야 한다.
+- API/JSON이 `"purpose_code": "AUDIT"`로 읽혀 Agent가 그대로 사용할 수 있다. 정수 id라면 Agent가 매번 조회 후 치환해야 한다.
 - `GET /api/v1/codes/{group_code}`로 유효값을 스스로 발견할 수 있어 Agent 자기탐색이 가능하다.
 
 대가로 DB 레벨 FK 무결성을 포기한다. 대신 서비스 레이어의 공용 검증기 `validate_code(group_code, value)`를 모든 쓰기 경로가 통과하도록 강제하고, 이 검증기를 단위테스트로 커버한다.
@@ -174,6 +174,8 @@ cd frontend && npm run dev                          # :5173
 | `trip` | `id`, `trip_no` (BT-2026-0001), `user_id`, `title`, `purpose_code`, `purpose_detail` (text), `destination_type_code`, `country_code`, `city`, `start_date`, `end_date`, `transport_code`, `accommodation_code`, `cost_center_code`, `estimated_cost`, `status`, `approver_id`, `submitted_at`, `approved_at`, `reject_reason`, `created_at`, `updated_at` |
 
 `purpose_code`는 공통코드(`TRIP_PURPOSE`) 선택값이고 `purpose_detail`은 자유 서술이다. 둘 다 필수.
+
+> **갱신 (2026-08-20).** `transport_code`·`accommodation_code`·`estimated_cost`는 제거됐다. `cost_center_code`는 nullable 컬럼으로만 남았고 출장 신청·수정에서 받지 않는다. [`2026-08-20-trip-form-slim-card-picker-design.md`](2026-08-20-trip-form-slim-card-picker-design.md) 참조.
 
 `TripStatus` 전이:
 

@@ -6,7 +6,6 @@
 """
 
 from datetime import date
-from decimal import Decimal
 from enum import StrEnum
 
 from app.enums import TripStatus, UserRole
@@ -23,29 +22,10 @@ EDITABLE_STATUSES = frozenset({TripStatus.DRAFT, TripStatus.REJECTED})
 #: 둘 이유가 없다.
 DELETABLE_STATUSES = frozenset({TripStatus.DRAFT})
 
-#: Trip.estimated_cost는 Numeric(14, 2) — 정수부 12자리가 최대다. 넘으면 flush에서
-#: Postgres numeric overflow가 나고 통일 핸들러의 catch-all에 걸려 500이 된다.
-#: Agent는 5xx를 재시도하므로, 절대 성공할 수 없는 요청에 재시도 루프가 걸린다.
-MAX_ESTIMATED_COST = Decimal("999999999999.99")
-
-
 def assert_date_range(*, start_date: date, end_date: date) -> None:
     if end_date < start_date:
         raise ValidationError(
             "INVALID_DATE_RANGE", "종료일은 시작일보다 빠를 수 없습니다", field="end_date"
-        )
-
-
-def assert_estimated_cost(estimated_cost: Decimal) -> None:
-    if estimated_cost < 0:
-        raise ValidationError(
-            "INVALID_AMOUNT", "예상 비용은 0 이상이어야 합니다", field="estimated_cost"
-        )
-    if estimated_cost > MAX_ESTIMATED_COST:
-        raise ValidationError(
-            "INVALID_AMOUNT",
-            f"예상 비용은 {MAX_ESTIMATED_COST}를 넘을 수 없습니다",
-            field="estimated_cost",
         )
 
 

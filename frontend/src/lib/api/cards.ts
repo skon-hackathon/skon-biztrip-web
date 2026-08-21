@@ -9,6 +9,8 @@ export interface CardTxnQuery {
 	merchant_category_code?: string;
 	q?: string;
 	include_cancelled?: boolean;
+	/** 어떤 정산서에도 담기지 않은 거래만. 정산 화면의 카드내역 피커가 쓴다. */
+	unsettled?: boolean;
 	page?: number;
 	size?: number;
 }

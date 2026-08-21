@@ -1,5 +1,4 @@
 from datetime import date, datetime
-from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -15,13 +14,6 @@ class TripCreate(BaseModel):
     city: str = Field(min_length=1, max_length=80)
     start_date: date
     end_date: date
-    transport_code: str = Field(min_length=1, max_length=40)
-    accommodation_code: str = Field(min_length=1, max_length=40)
-    cost_center_code: str = Field(min_length=1, max_length=20)
-    # ge=0 이나 max_digits를 여기에 걸지 않는다. 금액·날짜 같은 교차/도메인 제약은
-    # services/trip_rules.py가 400 + 도메인 코드로 돌려주기로 통일했다. Pydantic이 먼저
-    # 잡으면 422 SCHEMA_INVALID가 나가 Agent가 보는 에러 코드가 필드마다 달라진다.
-    estimated_cost: Decimal
 
 
 class TripUpdate(BaseModel):
@@ -33,10 +25,6 @@ class TripUpdate(BaseModel):
     city: str | None = Field(default=None, min_length=1, max_length=80)
     start_date: date | None = None
     end_date: date | None = None
-    transport_code: str | None = Field(default=None, min_length=1, max_length=40)
-    accommodation_code: str | None = Field(default=None, min_length=1, max_length=40)
-    cost_center_code: str | None = Field(default=None, min_length=1, max_length=20)
-    estimated_cost: Decimal | None = None
 
 
 class TripListItem(BaseModel):
@@ -50,7 +38,6 @@ class TripListItem(BaseModel):
     start_date: date
     end_date: date
     status: TripStatus
-    estimated_cost: Decimal
     user_id: int
     user_name: str
     approver_id: int | None
@@ -59,9 +46,8 @@ class TripListItem(BaseModel):
 
 class TripDetail(TripListItem):
     purpose_detail: str
-    transport_code: str
-    accommodation_code: str
-    cost_center_code: str
+    # 출장 신청에서 받지 않는 값이다. 시드 데이터에만 들어 있고 새 출장은 비어 있다.
+    cost_center_code: str | None
     cost_center_name: str | None
     submitted_at: datetime | None
     approved_at: datetime | None

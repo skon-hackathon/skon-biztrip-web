@@ -8,10 +8,6 @@ def _body(**overrides) -> dict:
         "city": "울산",
         "start_date": "2026-09-01",
         "end_date": "2026-09-03",
-        "transport_code": "RAIL",
-        "accommodation_code": "HOTEL",
-        "cost_center_code": "CC2030",
-        "estimated_cost": "450000",
     }
     payload.update(overrides)
     return payload
@@ -93,20 +89,22 @@ async def test_create_returns_201_with_draft(client, seeded, login_as):
     body = response.json()
     assert body["status"] == "DRAFT"
     assert body["trip_no"].startswith("BT-")
-    assert body["cost_center_name"]
+    # 신청에서 코스트센터를 받지 않으므로 비어 있다. 정산 화면에서 고른다.
+    assert body["cost_center_code"] is None
+    assert body["cost_center_name"] is None
 
 
 async def test_create_rejects_invalid_code_with_field(client, seeded, login_as):
     headers = await login_as("user1@skon.example")
 
     response = await client.post(
-        "/api/v1/trips", headers=headers, json=_body(transport_code="ROCKET")
+        "/api/v1/trips", headers=headers, json=_body(purpose_code="PICNIC")
     )
 
     assert response.status_code == 400
     error = response.json()["error"]
     assert error["code"] == "INVALID_CODE"
-    assert error["field"] == "transport_code"
+    assert error["field"] == "purpose_code"
 
 
 async def test_create_rejects_bad_date_range(client, seeded, login_as):
@@ -118,17 +116,6 @@ async def test_create_rejects_bad_date_range(client, seeded, login_as):
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "INVALID_DATE_RANGE"
-
-
-async def test_create_rejects_overflowing_amount_as_400_not_500(client, seeded, login_as):
-    headers = await login_as("user1@skon.example")
-
-    response = await client.post(
-        "/api/v1/trips", headers=headers, json=_body(estimated_cost="99999999999999999999")
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "INVALID_AMOUNT"
 
 
 async def test_get_detail_of_my_trip(client, seeded, login_as):

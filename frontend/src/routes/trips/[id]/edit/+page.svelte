@@ -34,13 +34,7 @@
 				country_code: trip.country_code,
 				city: trip.city,
 				start_date: trip.start_date,
-				end_date: trip.end_date,
-				transport_code: trip.transport_code,
-				accommodation_code: trip.accommodation_code,
-				cost_center_code: trip.cost_center_code,
-				// API는 Decimal을 "450000.00" 문자열로 보낸다. number 입력에 그대로 넣으면
-				// 소수점이 보이므로 정수 문자열로 다듬는다.
-				estimated_cost: String(Math.round(Number(trip.estimated_cost)))
+				end_date: trip.end_date
 			};
 			values = { ...initial };
 		} catch (error) {

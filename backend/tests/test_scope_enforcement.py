@@ -33,10 +33,6 @@ async def test_read_scope_cannot_write(client, db_session, seeded):
             "city": "울산",
             "start_date": "2026-09-01",
             "end_date": "2026-09-02",
-            "transport_code": "AIR",
-            "accommodation_code": "HOTEL",
-            "cost_center_code": "CC2100",
-            "estimated_cost": "300000",
         },
     )
 
