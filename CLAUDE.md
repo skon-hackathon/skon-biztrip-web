@@ -44,7 +44,11 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 ## 반드시 지킬 것
 
-**DB는 이 프로젝트가 띄우지 않는다.** 이미 운영 중인 PostgreSQL에 접속하며 `DB_HOST`·`DB_PORT`·`DB_USER`·`DB_PASSWORD`·`DB_NAME`·`DB_SCHEMA`만 주입한다. 접속은 매 커넥션마다 `search_path`를 `DB_SCHEMA` **하나로만** 고정한다 — `public`을 fallback으로 남기면 언퀄리파이드 DDL이 다른 스키마로 새어나가고, 특히 테스트의 `drop_all`이 운영 테이블을 지울 수 있다.
+**DB는 이 프로젝트가 띄우지 않는다.** 이미 운영 중인 PostgreSQL에 접속하며 `DB_HOST`·`DB_PORT`·`DB_USER`·`DB_PASSWORD`·`DB_NAME`·`DB_SCHEMA`·`USER_DB_SCHEMA`만 주입한다. 접속은 매 커넥션마다 `search_path`를 `DB_SCHEMA` **하나로만** 고정한다 — `public`을 fallback으로 남기면 언퀄리파이드 DDL이 다른 스키마로 새어나가고, 특히 테스트의 `drop_all`이 운영 테이블을 지울 수 있다.
+
+**`user` 테이블만 `public` 스키마에 산다.** 다른 프로젝트와 **계정을 공유**하기 위해서다(해커톤 데모라 SSO 대신 같은 테이블 + 같은 `JWT_SECRET`을 쓴다. 토큰 payload는 `{"sub": "<user.id>"}`·HS256이고 해시는 bcrypt다). 스키마는 `USER_DB_SCHEMA`(기본 `public`)가 정하고 `app/models/base.py`의 `USER_SCHEMA`·`USER_FK`가 유일한 선언이다. **user를 참조하는 FK는 반드시 `ForeignKey(USER_FK)`로 쓴다** — `"user.id"` 문자열은 메타데이터 키가 `public.user`라서 해석되지 않고 임포트 시점에 `NoReferencedTableError`로 죽는다. 반대로 `user.department_id`에는 FK를 걸지 않는다. 공유 테이블이 우리 스키마를 역참조하면 상대 프로젝트가 계정을 만들 때 우리 `department` 행이 있어야 하기 때문이다. 그 대가로 부서 삭제 시 사용자 참조를 DB가 막아주지 못하므로 `services/admin/departments.py`가 직접 센다. `role`도 PG enum이 아니라 varchar다 — 같은 이유로 타입 결합을 만들지 않는다.
+
+**테스트는 `user`도 테스트 스키마에서 돈다.** `tests/conftest.py`가 app을 임포트하기 **전에** `USER_DB_SCHEMA`를 `TEST_DB_SCHEMA`로 덮어쓰고, `test_engine`이 `User.__table__.schema`를 다시 확인해 아니면 `pytest.exit`한다. 이 두 줄 중 하나라도 지우면 매 테스트 세션의 `drop_all`이 **두 프로젝트의 공유 계정 테이블을 지운다.** `tests/test_user_schema.py`가 이 사실을 고정한다.
 
 **기동 시 스키마·데이터를 절대 자동으로 건드리지 않는다.** `create_all`도 시드도 `app/cli.py`의 명령을 사람이 실행할 때만 일어난다. 운영 DB에 붙어 있으므로 자동 DDL은 남의 데이터를 위협한다. `lifespan`에 DDL을 되살리지 말 것.
 
@@ -118,6 +122,8 @@ ingress/      nginx.conf (운영 리버스 프록시)
 Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 기존 테이블의 컬럼 변경은 반영하지 않는다.
 
 컬럼을 바꾸면 두 길 중 하나다. **참조하는 테이블이 없으면** 해당 테이블을 지우고 `init-db`를 다시 돌린다. **다른 테이블이 FK로 참조하면**(예: `expense_report.trip_id` → `trip`) 테이블을 드롭할 수 없으므로 손으로 `ALTER TABLE`을 돌린다 — 드롭하면 참조하는 쪽 데이터가 함께 사라진다. 2026-08-20의 출장 필드 제거가 그 경우였고, 문장은 `docs/superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md`에 있다.
+
+2026-08-21의 `user` 테이블 `public` 이동도 같은 경우다. 실행할 SQL은 `docs/migrations/2026-08-21-user-table-to-public.sql`이며 **코드 머지와 별개로 사람이 psql로 한 번 돌려야 한다.** 안 돌리면 앱이 없는 `public."user"`를 찔러 로그인부터 500이 난다.
 
 ## 이월 항목
 

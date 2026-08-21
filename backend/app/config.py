@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     db_name: str = "skon"
     db_schema: str = "skon"
 
+    #: `user` 테이블만 사는 스키마. 다른 프로젝트와 계정을 공유하려고 `public`에 두었다.
+    #: 나머지 테이블은 `db_schema`에 있고 search_path도 그 하나로만 고정되므로, user만
+    #: 스키마 한정자가 붙은 채(`public."user"`) 질의된다. 테스트는 이 값을 테스트 스키마로
+    #: 덮어써서 drop_all이 공유 계정 테이블을 지우지 못하게 한다(tests/conftest.py).
+    user_db_schema: str = "public"
+
     jwt_secret: str = "dev-only-insecure-secret-do-not-use-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 8
@@ -50,4 +56,5 @@ def assert_safe_identifier(name: str, *, field: str) -> str:
 def get_settings() -> Settings:
     settings = Settings()
     assert_safe_identifier(settings.db_schema, field="DB_SCHEMA")
+    assert_safe_identifier(settings.user_db_schema, field="USER_DB_SCHEMA")
     return settings

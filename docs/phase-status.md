@@ -522,6 +522,26 @@ target backend: failed to solve: DeadlineExceeded: context deadline exceeded
 - 피커는 카드·기간·업종 필터가 없다. 가맹점 검색과 페이지 이동만 있다.
 - 담기 실패(409 등)는 정산 화면 우측의 `actionError`에 뜬다. 모달 안에는 표시되지 않는다.
 
+## 후속 수정 — `user` 테이블 `public` 스키마 이동 (2026-08-21)
+
+마이그레이션 SQL: [`migrations/2026-08-21-user-table-to-public.sql`](migrations/2026-08-21-user-table-to-public.sql)
+
+다른 프로젝트와 **계정을 공유**하려고 `user` 테이블만 `public`으로 옮겼다. 원칙대로면 SSO/auth 연계지만 해커톤 데모 범위라 같은 테이블 + 같은 `JWT_SECRET`으로 대신한다. 두 프로젝트가 같은 SECRET·HS256을 쓰면 payload `{"sub": "<user.id>"}` 토큰이 상호 통용되고, 비밀번호 해시는 양쪽 다 bcrypt여야 한다.
+
+- 스키마는 `USER_DB_SCHEMA`(기본 `public`)가 정한다. `app/models/base.py`의 `USER_SCHEMA`·`USER_FK`가 유일한 선언이고, user를 참조하는 FK 8곳이 전부 `ForeignKey(USER_FK)`로 바뀌었다.
+- `user.department_id`의 FK를 **제거**했다. 공유 테이블이 `skon` 스키마를 역참조하면 상대 프로젝트가 계정을 만들 때 우리 `department` 행이 있어야 한다. 부서 존재 검증은 이미 `admin/users.py`의 `_assert_department`가 하고 있었고, 잃어버린 쪽(부서 삭제 시 사용자 참조 차단)은 `admin/departments.py`가 직접 세도록 추가했다 — `admin/centers.py`의 `_REFERENCES`와 같은 처지다.
+- `role`을 PG enum에서 varchar(20)으로 바꿨다. 저장 문자열은 그대로다. enum 타입으로 두면 상대 프로젝트가 우리 스키마의 타입에 묶인다.
+- `tests/conftest.py`가 app 임포트 **전에** `USER_DB_SCHEMA`를 테스트 스키마로 덮어쓰고, `test_engine`이 `User.__table__.schema`를 재확인해 아니면 `pytest.exit`한다. 없으면 매 세션 `drop_all`이 공유 계정 테이블을 지운다. mutation으로 확인했다(환경변수 줄 제거 → `drop_all` 전에 Exit).
+- `tests/test_user_schema.py` 6건 신규. 백엔드 575건 통과.
+
+**남은 것**
+
+- **DB 마이그레이션을 사람이 돌려야 한다.** 코드만 배포하면 앱이 없는 `public."user"`를 찔러 로그인부터 500이다. 스크립트는 `public."user"`가 이미 있으면 중단한다 — 상대 프로젝트가 먼저 테이블을 만들었다면 옮기는 대신 계정 병합 방법을 먼저 정해야 한다.
+- **`app.cli seed`가 이제 공유 테이블에 쓴다.** 데모 계정 이메일·사번이 상대 프로젝트 데이터와 겹치면 유니크 위반이 난다.
+- 상대 프로젝트가 만든 계정은 우리 필수 컬럼(`employee_no`·`department_id`·`position_code`)을 채워야 우리 화면에서 정상으로 보인다. 부서가 없는 id면 Admin 목록의 부서명이 빈 문자열로 나온다(500은 아니다).
+- 두 프로젝트가 `JWT_SECRET`을 공유하므로 **한쪽에서 SECRET이 새면 양쪽 세션이 함께 뚫린다.** 데모 종료 후 회전할 것.
+- 브라우저 확인은 안 했다. 로그인·Admin 사용자 CRUD·부서 삭제 409는 화면에서 아직 안 돌려봤다.
+
 ## 이후 Phase
 
 spec 10의 5단계가 모두 끝났다. 다음 작업은 새 요구가 생길 때 정의한다. 우선순위 후보는 위 이월 목록과 아래 공통 미결이다.
