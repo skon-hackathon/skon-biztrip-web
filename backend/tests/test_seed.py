@@ -27,7 +27,7 @@ async def test_seed_creates_expected_master_data(db_session):
     await seed_all(db_session)
 
     assert await _count(db_session, Department) == 4
-    assert await _count(db_session, User) == 14
+    assert await _count(db_session, User) == 15
     assert await _count(db_session, CodeGroup) == 9
     assert await _count(db_session, FundCenter) == 6
     assert await _count(db_session, CostCenter) == 10
@@ -153,3 +153,23 @@ async def test_some_completed_trips_are_left_unsettled(seeded):
     )
     reported_ids = set((await seeded.execute(select(ExpenseReport.trip_id))).scalars())
     assert completed_ids - reported_ids
+
+
+async def test_seed_creates_one_pending_user(db_session, seeded):
+    # 승인 화면을 시연하려면 대기 건이 있어야 한다. 없으면 데모마다 사람이 손으로
+    # 가입해야 승인 흐름을 보여줄 수 있다.
+    from sqlalchemy import select
+
+    from app.enums import UserStatus
+    from app.models import User
+
+    rows = (
+        (await db_session.execute(select(User).where(User.status == UserStatus.PENDING)))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    pending = rows[0]
+    assert pending.is_active is False
+    assert pending.employee_no is None
+    assert pending.position_code is None

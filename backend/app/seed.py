@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import ExpenseReportStatus, TripStatus, UserRole
+from app.enums import ExpenseReportStatus, TripStatus, UserRole, UserStatus
 from app.models import (
     CardTransaction,
     Code,
@@ -264,6 +264,27 @@ async def _seed_users(session: AsyncSession, depts: dict[str, Department]) -> li
         session.add(employee)
         employees.append(employee)
     await session.flush()
+
+    # 승인 화면 시연용 대기 계정. 시드는 멱등해야 하므로 이메일로 존재를 확인하고 건너뛴다.
+    pending_email = "newbie@skon.example"
+    exists = await session.scalar(select(User).where(User.email == pending_email))
+    if exists is None:
+        session.add(
+            User(
+                email=pending_email,
+                password_hash=pw,
+                name="신입가입",
+                employee_no=None,
+                department_id=depts["D100"].id,
+                position_code=None,
+                manager_id=None,
+                role=UserRole.EMPLOYEE,
+                status=UserStatus.PENDING,
+                is_active=False,
+            )
+        )
+        await session.flush()
+
     return [admin, *managers, *employees]
 
 
