@@ -173,3 +173,35 @@ async def test_seed_creates_one_pending_user(db_session, seeded):
     assert pending.is_active is False
     assert pending.employee_no is None
     assert pending.position_code is None
+
+
+async def test_pending_user_is_seeded_into_an_already_seeded_db(db_session, seeded):
+    """이미 사용자가 있는 DB에도 대기 계정이 들어가야 한다.
+
+    `_seed_users`는 사용자가 하나라도 있으면 맨 위에서 early-return한다. 대기 계정
+    생성을 그 함수 **안**에 두면 빈 스키마에서 시작하는 테스트만 통과하고, 이미 시드된
+    운영 DB에서는 영원히 실행되지 않는다. 실제로 한 번 그렇게 나갔다.
+
+    그래서 대기 계정을 지운 뒤 다시 시드해 재생성되는지를 본다 — 코드가 early-return
+    안으로 되돌아가면 이 테스트가 깨진다.
+    """
+    from sqlalchemy import select
+
+    from app.enums import UserStatus
+    from app.models import User
+    from app.seed import seed_all
+
+    pending = await db_session.scalar(
+        select(User).where(User.status == UserStatus.PENDING)
+    )
+    assert pending is not None
+    await db_session.delete(pending)
+    await db_session.flush()
+
+    # 사용자 14명은 그대로 남아 있으므로 _seed_users는 early-return한다.
+    await seed_all(db_session)
+
+    again = await db_session.scalar(select(User).where(User.status == UserStatus.PENDING))
+    assert again is not None
+    assert again.email == "newbie@skon.example"
+    assert again.is_active is False
