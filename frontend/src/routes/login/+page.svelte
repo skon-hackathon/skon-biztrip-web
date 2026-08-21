@@ -58,5 +58,9 @@
 			데모 계정 — 사원 user1@skon.example / 팀장 manager1@skon.example / 관리자 admin@skon.example ·
 			비밀번호 공통 skon1234!
 		</p>
+
+		<p class="mt-6 text-caption text-muted">
+			계정이 없으신가요? <a class="underline" href="/signup">회원가입</a>
+		</p>
 	</div>
 </div>
