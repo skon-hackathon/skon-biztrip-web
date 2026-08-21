@@ -23,7 +23,7 @@ cd backend && uv run python -m app.cli init-db    # 스키마 + 없는 테이블
 cd backend && uv run python -m app.cli seed       # 데모 데이터 (멱등)
 
 # 테스트
-cd backend  && uv run pytest          # 621건
+cd backend  && uv run pytest          # 622건
 cd frontend && npm test               # 74건
 cd frontend && npm run check          # 타입체크, 0 errors / 0 warnings 유지
 
@@ -81,6 +81,8 @@ NULL을 쓰는 이유는 가짜 사번이 상대 프로젝트·유저 관리 화
 **테스트는 `user`도 테스트 스키마에서 돈다.** `tests/conftest.py`가 app을 임포트하기 **전에** `USER_DB_SCHEMA`를 `TEST_DB_SCHEMA`로 덮어쓰고, `test_engine`이 `User.__table__.schema`를 다시 확인해 아니면 `pytest.exit`한다. 이 두 줄 중 하나라도 지우면 매 테스트 세션의 `drop_all`이 **두 프로젝트의 공유 계정 테이블을 지운다.** `tests/test_user_schema.py`가 이 사실을 고정한다.
 
 **기동 시 스키마·데이터를 절대 자동으로 건드리지 않는다.** `create_all`도 시드도 `app/cli.py`의 명령을 사람이 실행할 때만 일어난다. 운영 DB에 붙어 있으므로 자동 DDL은 남의 데이터를 위협한다. `lifespan`에 DDL을 되살리지 말 것.
+
+**시드 함수는 대부분 early-return한다. 새 시드를 그 안에 넣지 말 것.** `_seed_users`는 사용자가 하나라도 있으면 맨 위에서 돌아선다(`_seed_cards`·`_seed_trips`도 `_is_seeded`로 같은 일을 한다). 새로 만들 데이터를 그 함수 **안**에 추가하면 **빈 스키마에서 시작하는 테스트만 통과하고 이미 시드된 운영 DB에서는 영원히 실행되지 않는다.** 2026-08-22의 승인 대기 계정이 실제로 그렇게 나갔고, 운영 DB를 눈으로 보고서야 발견했다. 새 시드 블록은 `_seed_pending_signup`처럼 **자기 존재 검사를 가진 별도 함수**로 만들어 `seed_all`이 직접 부른다. 회귀 테스트는 "해당 행을 지우고 다시 시드해 재생성되는가"로 쓴다 — 그래야 early-return 안으로 되돌아가는 변경이 잡힌다.
 
 **테스트는 별도 스키마에서 돈다.** `TEST_DB_SCHEMA`(기본 `skon_test`)가 `DB_SCHEMA`와 같으면 픽스처가 실행을 거부한다. 매 세션 `drop_all`을 돌리기 때문이다. 이 가드를 제거하지 말 것.
 
@@ -164,8 +166,8 @@ Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 
 
 `docs/phase-status.md`의 "Phase 5에서 넘어온 항목"과 "후속 수정" 절을 읽을 것. 요약하면:
 
-- **브라우저 수동 시나리오 40건 미확인.** Phase 4·5의 화면 7개와 이번 모달은 **렌더 확인이 전혀 안 됐다** — 타입체크·빌드·테스트·curl만 통과한 상태다.
-- **운영 DB의 스키마 변경은 코드 머지와 별개로 사람이 돌려야 한다.** 안 돌리면 새 출장 생성이 NOT NULL 위반으로 500이 된다.
+- **브라우저 수동 시나리오 54건 미확인.** Phase 4·5의 화면 7개, 정산 카드내역 모달, 그리고 가입·승인 화면 2개가 **렌더 확인이 전혀 안 됐다** — 타입체크·빌드·테스트·curl만 통과한 상태다. 가입·승인은 API 흐름 18건을 터널로 실측했지만 화면은 별개다.
+- **운영 DB의 스키마 변경은 코드 머지와 별개로 사람이 돌려야 한다.** 안 돌리면 새 출장 생성이 NOT NULL 위반으로 500이 되고, `status` 컬럼이 없으면 로그인부터 500이 된다. 2026-08-21·08-22 두 건은 실행 완료다.
 - `last_used_at`을 API Key 요청마다 갱신(UPDATE + COMMIT)한다. 트래픽이 늘면 스로틀로 옮긴다.
 - 키 발급·폐기와 Admin 마스터 변경은 `activity_log`에 남지 않는다(`EntityType`에 멤버가 없다).
 - 출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다. Admin 목록도 페이징 UI 없이 `size=100`이다.

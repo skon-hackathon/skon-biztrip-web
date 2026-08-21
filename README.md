@@ -10,22 +10,27 @@ SK온 사내 출장시스템을 모사한 데모 웹 애플리케이션. 출장 
 - 브라우저 수동 시나리오: [`docs/manual-scenarios.md`](docs/manual-scenarios.md)
 - 디자인 규칙: [`DESIGN.md`](DESIGN.md)
 
-## 현재 상태 — Phase 5 (운영) 완료
+## 현재 상태 — Phase 5 (운영) 완료 + 회원가입·승인
 
-spec 10의 5단계가 모두 끝났다.
+spec 10의 5단계가 모두 끝났고, 이후 회원가입·관리자 승인이 더해졌다.
 
 | 영역 | 내용 |
 |---|---|
-| 백엔드 | FastAPI, 14테이블 스키마, JWT + API Key 이중 인증, 출장·정산·카드 API, 자동매칭, 관리자 CRUD 28개, 엔드포인트별 스코프 표, 수동 시드 CLI, 테스트 **569건** |
-| 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰, 출장·결재·알림·대시보드, 법인카드·정산서, API Key 발급 화면, `/developers` 가이드, 관리자 화면 5종, 744px 반응형, 테스트 **73건** |
+| 백엔드 | FastAPI, 14테이블 스키마, JWT + API Key 이중 인증, 출장·정산·카드 API, 자동매칭, 관리자 CRUD 28개, 회원가입·승인, 엔드포인트별 스코프 표, 수동 시드 CLI, 테스트 **622건** |
+| 프론트엔드 | SvelteKit SPA, DESIGN.md 토큰, 출장·결재·알림·대시보드, 법인카드·정산서, API Key 발급 화면, `/developers` 가이드, 회원가입 화면, 관리자 화면 5종, 744px 반응형, 테스트 **74건** |
 | 배포 | Dockerfile 2종, nginx ingress, 3서비스 compose (DB는 스택 밖) |
 
 **동작하는 흐름**: 출장 신청 → 상신 → 결재자 알림 → 결재함 → 승인/반려 → (반려 시) 재작성 → 완료 처리 → 정산서 작성 → 자동매칭 또는 카드내역 모달로 카드내역 담기 → 제출 → 결재 → 승인 시 출장이 정산완료로 자동 전이. 모든 전이가 타임라인에 남는다.
+
+**가입 흐름**: `/signup`에서 이메일·이름·비밀번호·부서만 신청 → 관리자가 `/admin/users`에서 사번·직급·결재자·역할을 채워 승인 → 로그인 가능. 승인 전 로그인은 "관리자 승인 대기 중입니다"로 안내된다. 사번·직급·결재자를 본인이 고르지 않는 이유는 그 값들이 결재선과 정산 귀속의 근거이기 때문이다 — 승인은 "확인"이 아니라 "배치"다. 거절해도 행은 남아 같은 이메일로 재신청할 수 있다.
+
+설계: [`docs/superpowers/specs/2026-08-22-signup-approval-design.md`](docs/superpowers/specs/2026-08-22-signup-approval-design.md)
 
 ### 화면
 
 ```
 /login                 로그인
+/signup                회원가입 (미인증)
 /                      대시보드 (내 출장, 결재 대기, 미정산, 최근 알림)
 /trips · /trips/new · /trips/[id] · /trips/[id]/edit
 /approvals             결재함 (MANAGER·ADMIN)
@@ -150,6 +155,7 @@ JWT_SECRET=<32바이트 이상>
 - 위치는 `USER_DB_SCHEMA`(기본 `public`)가 정한다. `user`만 스키마 한정자가 붙은 채(`public."user"`) 질의되고 나머지는 그대로 `search_path`로 해석된다.
 - 공유 테이블이 이 프로젝트 스키마를 역참조하지 않도록 `user.department_id`에는 FK가 없고 `role`은 PG enum이 아니라 varchar다. 부서 존재 검증과 부서 삭제 시 사용자 참조 검사는 앱이 한다.
 - 기존 DB를 옮기는 SQL은 [`docs/migrations/2026-08-21-user-table-to-public.sql`](docs/migrations/2026-08-21-user-table-to-public.sql)이다. **사람이 한 번 실행해야 한다.**
+- 회원가입이 더해지며 `status` 컬럼이 붙고 `employee_no`·`position_code`의 NOT NULL이 풀렸다: [`docs/migrations/2026-08-22-user-signup-status.sql`](docs/migrations/2026-08-22-user-signup-status.sql). 역시 **사람이 한 번 실행해야 한다.** 둘 다 제약 완화라 계정을 공유하는 상대 프로젝트의 기존 INSERT는 그대로 동작한다.
 - 테스트는 `user`도 `TEST_DB_SCHEMA` 안에 만든다. 아니면 매 실행의 `drop_all`이 공유 계정을 지운다 — 픽스처가 그 상태를 감지하면 실행을 거부한다.
 
 ### 스키마·데이터 준비는 수동이다
@@ -198,8 +204,8 @@ cd frontend && npm run dev
 ## 테스트
 
 ```bash
-cd backend  && uv run pytest          # 569건
-cd frontend && npm test               # 73건
+cd backend  && uv run pytest          # 622건
+cd frontend && npm test               # 74건
 cd frontend && npm run check          # 타입체크 (0 errors / 0 warnings)
 ```
 
