@@ -3,8 +3,14 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from app.deps import AdminUser, DbSession, JwtOnlyAdmin
-from app.enums import UserRole
-from app.schemas.admin import AdminUserCreate, AdminUserOut, AdminUserUpdate, PasswordSet
+from app.enums import UserRole, UserStatus
+from app.schemas.admin import (
+    AdminUserCreate,
+    AdminUserOut,
+    AdminUserUpdate,
+    PasswordSet,
+    UserApprove,
+)
 from app.schemas.common import Page
 from app.services.admin import users as service
 
@@ -19,6 +25,7 @@ async def list_users(
     department_id: int | None = None,
     role: UserRole | None = None,
     is_active: bool | None = None,
+    status: UserStatus | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> Page[AdminUserOut]:
@@ -29,6 +36,7 @@ async def list_users(
             department_id=department_id,
             role=role,
             is_active=is_active,
+            status=status,
             page=page,
             size=size,
         ),
@@ -60,3 +68,17 @@ async def set_password(
 ) -> None:
     """**로그인 세션 전용.** API Key로는 호출할 수 없다 — 키가 JWT로 승격되는 경로를 막는다."""
     await service.set_password(session, user_id=user_id, payload=payload)
+
+
+@router.post("/{user_id}/approve", response_model=AdminUserOut)
+async def approve_user(
+    user_id: int, payload: UserApprove, user: AdminUser, session: DbSession
+) -> AdminUserOut:
+    """가입 승인. 관리자가 사번·직급·결재자·역할을 채우면 계정이 열린다."""
+    return await service.approve_user(session, user_id=user_id, payload=payload)
+
+
+@router.post("/{user_id}/reject", response_model=AdminUserOut)
+async def reject_user(user_id: int, user: AdminUser, session: DbSession) -> AdminUserOut:
+    """가입 거절. 행은 남으므로 같은 이메일로 재신청할 수 있다."""
+    return await service.reject_user(session, user_id=user_id)
