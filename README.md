@@ -57,8 +57,7 @@ curl -s -X POST localhost:8000/api/v1/trips -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"title":"울산공장 품질점검","purpose_code":"AUDIT","purpose_detail":"라인 3 확인",
        "destination_type_code":"DOMESTIC","country_code":"KR","city":"울산",
-       "start_date":"2026-10-01","end_date":"2026-10-03","transport_code":"RAIL",
-       "accommodation_code":"HOTEL","cost_center_code":"CC2030","estimated_cost":"300000"}'
+       "start_date":"2026-10-01","end_date":"2026-10-03"}'
 
 curl -s -X POST localhost:8000/api/v1/trips/41/submit -H "Authorization: Bearer $TOKEN"
 

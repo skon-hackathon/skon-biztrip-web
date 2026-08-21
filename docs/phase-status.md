@@ -504,6 +504,22 @@ target backend: failed to solve: DeadlineExceeded: context deadline exceeded
 - rate limit·IP 제한 없음.
 - 운영 DB의 옛 시드 데이터는 옛 배정 규칙 그대로다.
 
+## 후속 수정 — 출장 필드 축소 · 정산 카드내역 피커 (2026-08-20)
+
+설계: [`superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md`](superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md)
+
+- 출장에서 `transport_code`·`accommodation_code`·`estimated_cost`를 전면 제거했다. `MAX_ESTIMATED_COST`·`assert_estimated_cost`도 함께 사라졌다 — 막을 컬럼이 없다.
+- `Trip.cost_center_code`는 nullable 컬럼으로만 남았다. 신청·수정 스키마와 폼에서 빠졌으므로 **새 출장은 항상 `None`**이고, 값이 있는 것은 시드 데이터뿐이다. 정산서는 그 `None`을 승계하고 사용자가 정산 화면에서 고른다.
+- `GET /api/v1/card-transactions`에 `unsettled`가 생겼다. `CardTransactionOut`에 `suggested_expense_category_code`가 생겼다.
+- 프론트에 `Modal.svelte`·`CardTransactionPicker.svelte`가 생겼다. 이 프로젝트의 첫 모달이다.
+
+**남은 것**
+
+- **DB 수동 ALTER가 필요하다.** 운영 스키마의 `trip` 테이블에서 컬럼 3개를 드롭하고 `cost_center_code`의 NOT NULL을 풀어야 새 출장 생성이 통과한다. 안 하면 INSERT가 NOT NULL 위반으로 500이 된다. 문장은 설계 문서에 있다.
+- **브라우저 수동 시나리오 7건 신규 미확인** (`manual-scenarios.md`의 "후속 수정 신규"). 모달은 렌더 확인이 전혀 안 됐다 — 타입체크·빌드·테스트만 통과한 상태다.
+- 피커는 카드·기간·업종 필터가 없다. 가맹점 검색과 페이지 이동만 있다.
+- 담기 실패(409 등)는 정산 화면 우측의 `actionError`에 뜬다. 모달 안에는 표시되지 않는다.
+
 ## 이후 Phase
 
 spec 10의 5단계가 모두 끝났다. 다음 작업은 새 요구가 생길 때 정의한다. 우선순위 후보는 위 이월 목록과 아래 공통 미결이다.

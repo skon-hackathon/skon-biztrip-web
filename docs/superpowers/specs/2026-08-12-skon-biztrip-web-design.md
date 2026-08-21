@@ -175,6 +175,8 @@ cd frontend && npm run dev                          # :5173
 
 `purpose_code`는 공통코드(`TRIP_PURPOSE`) 선택값이고 `purpose_detail`은 자유 서술이다. 둘 다 필수.
 
+> **갱신 (2026-08-20).** `transport_code`·`accommodation_code`·`estimated_cost`는 제거됐다. `cost_center_code`는 nullable 컬럼으로만 남았고 출장 신청·수정에서 받지 않는다. [`2026-08-20-trip-form-slim-card-picker-design.md`](2026-08-20-trip-form-slim-card-picker-design.md) 참조.
+
 `TripStatus` 전이:
 
 ```
