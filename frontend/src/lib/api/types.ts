@@ -47,7 +47,6 @@ export interface TripListItem {
 	start_date: string;
 	end_date: string;
 	status: TripStatus;
-	estimated_cost: string;
 	user_id: number;
 	user_name: string;
 	approver_id: number | null;
@@ -56,9 +55,8 @@ export interface TripListItem {
 
 export interface TripDetail extends TripListItem {
 	purpose_detail: string;
-	transport_code: string;
-	accommodation_code: string;
-	cost_center_code: string;
+	/** 출장 신청에서 받지 않는다. 시드 데이터에만 있고 새 출장은 비어 있다. */
+	cost_center_code: string | null;
 	cost_center_name: string | null;
 	submitted_at: string | null;
 	approved_at: string | null;
@@ -88,10 +86,6 @@ export interface TripInput {
 	city: string;
 	start_date: string;
 	end_date: string;
-	transport_code: string;
-	accommodation_code: string;
-	cost_center_code: string;
-	estimated_cost: string;
 }
 
 export interface CodeItem {
@@ -155,6 +149,8 @@ export interface CardTransactionItem {
 	currency_code: string;
 	amount_krw: string;
 	is_cancelled: boolean;
+	/** 업종에서 추천한 정산 비목. 자동매칭과 같은 매핑을 서버가 계산해 내려준다. */
+	suggested_expense_category_code: string;
 }
 
 export interface ExpenseItem {

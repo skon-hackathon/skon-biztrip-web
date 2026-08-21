@@ -1,5 +1,4 @@
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -8,12 +7,10 @@ import app.services.trip_rules as trip_rules_module
 from app.enums import TripStatus, UserRole
 from app.errors import ConflictError, ForbiddenError, ValidationError
 from app.services.trip_rules import (
-    MAX_ESTIMATED_COST,
     assert_completable,
     assert_date_range,
     assert_deletable,
     assert_editable,
-    assert_estimated_cost,
     assert_has_approver,
     assert_reject_reason,
     assert_system_transition,
@@ -40,30 +37,6 @@ def test_date_range_rejects_end_before_start():
     assert error.status_code == 400
     assert error.code == "INVALID_DATE_RANGE"
     assert error.field == "end_date"
-
-
-def test_estimated_cost_accepts_zero():
-    assert_estimated_cost(Decimal("0"))
-
-
-def test_estimated_cost_rejects_negative():
-    with pytest.raises(ValidationError) as exc_info:
-        assert_estimated_cost(Decimal("-1"))
-
-    assert exc_info.value.code == "INVALID_AMOUNT"
-    assert exc_info.value.field == "estimated_cost"
-
-
-def test_estimated_cost_accepts_max():
-    assert_estimated_cost(MAX_ESTIMATED_COST)
-
-
-def test_estimated_cost_rejects_over_max():
-    with pytest.raises(ValidationError) as exc_info:
-        assert_estimated_cost(MAX_ESTIMATED_COST + Decimal("0.01"))
-
-    assert exc_info.value.code == "INVALID_AMOUNT"
-    assert exc_info.value.field == "estimated_cost"
 
 
 @pytest.mark.parametrize("role", [UserRole.EMPLOYEE, UserRole.MANAGER])

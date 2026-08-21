@@ -122,10 +122,7 @@ async def make_trip(
         "city": "울산",
         "start_date": start,
         "end_date": overrides.pop("end_date", start + timedelta(days=2)),
-        "transport_code": "RAIL",
-        "accommodation_code": "HOTEL",
         "cost_center_code": "CC2030",
-        "estimated_cost": Decimal("450000"),
         "status": status,
     }
     values.update(overrides)

@@ -19,7 +19,7 @@
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import Textarea from '$lib/components/Textarea.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
-	import { formatDateRange, formatDateTime, formatKrw, tripLength } from '$lib/format';
+	import { formatDateRange, formatDateTime, tripLength } from '$lib/format';
 	import { auth } from '$lib/stores/auth.svelte';
 
 	let trip = $state<TripDetail | null>(null);
@@ -142,18 +142,16 @@
 					<dt class="text-caption text-muted">목적지</dt>
 					<dd class="mt-1 text-body-md text-ink">{trip.country_code} · {trip.city}</dd>
 				</div>
-				<div>
-					<dt class="text-caption text-muted">이동수단 / 숙박</dt>
-					<dd class="mt-1 text-body-md text-ink">
-						{trip.transport_code} · {trip.accommodation_code}
-					</dd>
-				</div>
-				<div>
-					<dt class="text-caption text-muted">코스트센터</dt>
-					<dd class="mt-1 text-body-md text-ink">
-						{trip.cost_center_code}{trip.cost_center_name ? ` · ${trip.cost_center_name}` : ''}
-					</dd>
-				</div>
+				<!-- 코스트센터는 출장 신청에서 받지 않는다. 값이 있는 출장(시드 데이터)에만
+				     보여주고, 새 출장은 정산 화면에서 고른다. -->
+				{#if trip.cost_center_code}
+					<div>
+						<dt class="text-caption text-muted">코스트센터</dt>
+						<dd class="mt-1 text-body-md text-ink">
+							{trip.cost_center_code}{trip.cost_center_name ? ` · ${trip.cost_center_name}` : ''}
+						</dd>
+					</div>
+				{/if}
 				<div>
 					<dt class="text-caption text-muted">신청자 / 결재자</dt>
 					<dd class="mt-1 text-body-md text-ink">
@@ -181,8 +179,10 @@
 
 		<aside class="lg:sticky lg:top-8 lg:self-start">
 			<Card>
-				<p class="text-caption text-muted">예상 비용</p>
-				<p class="mt-1 text-display-md text-ink">{formatKrw(trip.estimated_cost)}</p>
+				<p class="text-caption text-muted">신청자 / 결재자</p>
+				<p class="mt-1 text-body-md text-ink">
+					{trip.user_name} → {trip.approver_name ?? '결재자 미지정'}
+				</p>
 
 				{#if actionError}
 					<p class="mt-4 text-caption-sm text-error" role="alert">{actionError}</p>

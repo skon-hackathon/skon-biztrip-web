@@ -25,3 +25,7 @@ class CardTransactionOut(BaseModel):
     currency_code: str
     amount_krw: Decimal
     is_cancelled: bool
+    # 업종에서 추천한 정산 비목. 서비스가 services/matching.suggest_expense_category로
+    # 채운다 — 화면이 업종→비목 매핑을 따로 가지면 자동매칭이 추천하는 비목과 카드내역
+    # 피커가 추천하는 비목이 갈라진다.
+    suggested_expense_category_code: str

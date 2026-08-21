@@ -42,11 +42,7 @@
 					country_code: 'KR',
 					city: '울산',
 					start_date: '2026-09-01',
-					end_date: '2026-09-02',
-					transport_code: 'AIR',
-					accommodation_code: 'HOTEL',
-					cost_center_code: 'CC2100',
-					estimated_cost: '300000'
+					end_date: '2026-09-02'
 				}
 			}),
 			scope: 'trips:write'

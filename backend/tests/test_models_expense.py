@@ -53,10 +53,7 @@ async def _fixture_trip(db_session) -> tuple[User, Trip]:
         city="서산",
         start_date=date(2026, 7, 1),
         end_date=date(2026, 7, 2),
-        transport_code="CAR",
-        accommodation_code="HOTEL",
         cost_center_code="CC2030",
-        estimated_cost=Decimal("200000"),
         status=TripStatus.COMPLETED,
     )
     db_session.add(trip)

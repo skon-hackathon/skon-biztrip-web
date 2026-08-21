@@ -338,11 +338,9 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
         overseas = rng.random() < 0.3
         if overseas:
             country, city = rng.choice(OVERSEAS)
-            transport = "AIR"
             duration = rng.randint(3, 7)
         else:
             country, city = "KR", rng.choice(DOMESTIC_CITIES)
-            transport = rng.choice(["RAIL", "CAR", "BUS"])
             duration = rng.randint(1, 3)
 
         if status in {TripStatus.COMPLETED, TripStatus.SETTLED}:
@@ -382,10 +380,9 @@ async def _seed_trips(session: AsyncSession, users: list[User], rng: random.Rand
             city=city,
             start_date=start,
             end_date=start + timedelta(days=duration),
-            transport_code=transport,
-            accommodation_code=rng.choice(["HOTEL", "RESIDENCE", "DORM"]),
+            # 신청 화면은 코스트센터를 받지 않지만, 시드 출장에는 값을 넣는다 — 정산서가
+            # 이 값을 승계하는 경로(services/expenses.py)를 데모에서 보여주기 위해서다.
             cost_center_code=rng.choice([c[0] for c in COST_CENTERS]),
-            estimated_cost=Decimal(rng.randrange(200000, 4000000, 10000)),
             status=status,
             approver_id=author.manager_id if status != TripStatus.DRAFT else None,
             submitted_at=submitted_at,

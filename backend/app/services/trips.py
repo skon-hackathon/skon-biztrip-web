@@ -23,7 +23,6 @@ from app.schemas.trip import (
     TripListItem,
     TripUpdate,
 )
-from app.services.centers import assert_cost_center
 from app.services.codes import validate_codes
 from app.services.history import NotifySpec, record_transition
 from app.services.numbering import next_trip_no
@@ -32,7 +31,6 @@ from app.services.trip_rules import (
     assert_date_range,
     assert_deletable,
     assert_editable,
-    assert_estimated_cost,
     assert_has_approver,
     assert_reject_reason,
     assert_system_transition,
@@ -84,7 +82,6 @@ async def build_list_items(session: AsyncSession, trips: list[Trip]) -> list[Tri
             start_date=trip.start_date,
             end_date=trip.end_date,
             status=trip.status,
-            estimated_cost=trip.estimated_cost,
             user_id=trip.user_id,
             user_name=names.get(trip.user_id, ""),
             approver_id=trip.approver_id,
@@ -96,16 +93,20 @@ async def build_list_items(session: AsyncSession, trips: list[Trip]) -> list[Tri
 
 async def build_detail(session: AsyncSession, trip: Trip) -> TripDetail:
     [item] = await build_list_items(session, [trip])
+    # 코스트센터가 비어 있으면 조회 자체를 건너뛴다. None으로 where를 걸면 항상 0건이라
+    # 결과는 같지만 쓸모없는 왕복이 한 번 생긴다.
     cost_center_name = (
-        await session.execute(
-            select(CostCenter.name).where(CostCenter.code == trip.cost_center_code)
-        )
-    ).scalar_one_or_none()
+        (
+            await session.execute(
+                select(CostCenter.name).where(CostCenter.code == trip.cost_center_code)
+            )
+        ).scalar_one_or_none()
+        if trip.cost_center_code
+        else None
+    )
     return TripDetail(
         **item.model_dump(),
         purpose_detail=trip.purpose_detail,
-        transport_code=trip.transport_code,
-        accommodation_code=trip.accommodation_code,
         cost_center_code=trip.cost_center_code,
         cost_center_name=cost_center_name,
         submitted_at=trip.submitted_at,
@@ -189,22 +190,18 @@ async def get_trip(session: AsyncSession, *, user: User, trip_id: int) -> TripDe
 
 
 #: 코드값 검증이 필요한 필드. (group_code, 필드명) 짝을 여기 한 곳에서만 관리한다.
-#: 손으로 다섯 쌍을 나열하지 않기 때문에 그룹과 field를 잘못 짝지을 수 없다.
+#: 손으로 세 쌍을 나열하지 않기 때문에 그룹과 field를 잘못 짝지을 수 없다.
 _CODE_FIELDS: tuple[tuple[str, str], ...] = (
     ("TRIP_PURPOSE", "purpose_code"),
     ("DESTINATION_TYPE", "destination_type_code"),
     ("COUNTRY", "country_code"),
-    ("TRANSPORT", "transport_code"),
-    ("ACCOMMODATION", "accommodation_code"),
 )
 
 #: 생성·수정 양쪽에서 검증해야 하는 필드. 수정은 부분 갱신이므로 병합 결과를 넘긴다.
 _VALIDATED_FIELDS: tuple[str, ...] = (
     *(field_name for _, field_name in _CODE_FIELDS),
-    "cost_center_code",
     "start_date",
     "end_date",
-    "estimated_cost",
 )
 
 
@@ -212,9 +209,7 @@ async def _validate_writable_fields(session: AsyncSession, values: dict) -> None
     await validate_codes(
         session, [(group, field_name, values[field_name]) for group, field_name in _CODE_FIELDS]
     )
-    await assert_cost_center(session, values["cost_center_code"])
     assert_date_range(start_date=values["start_date"], end_date=values["end_date"])
-    assert_estimated_cost(values["estimated_cost"])
 
 
 async def create_trip(session: AsyncSession, *, user: User, payload: TripCreate) -> TripDetail:

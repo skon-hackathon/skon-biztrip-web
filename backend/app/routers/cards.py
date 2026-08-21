@@ -26,6 +26,7 @@ async def list_card_transactions(
     merchant_category_code: str | None = None,
     q: str | None = None,
     include_cancelled: bool = False,
+    unsettled: bool = False,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> Page[CardTransactionOut]:
@@ -39,6 +40,7 @@ async def list_card_transactions(
             merchant_category_code=merchant_category_code,
             q=q,
             include_cancelled=include_cancelled,
+            unsettled=unsettled,
             page=page,
             size=size,
         ),

@@ -1,5 +1,4 @@
 from datetime import date
-from decimal import Decimal
 
 from sqlalchemy import select
 
@@ -40,10 +39,7 @@ async def test_trip_defaults_to_draft(db_session):
             city="울산",
             start_date=date(2026, 9, 1),
             end_date=date(2026, 9, 3),
-            transport_code="RAIL",
-            accommodation_code="HOTEL",
             cost_center_code="CC2030",
-            estimated_cost=Decimal("450000"),
         )
     )
     await db_session.flush()
@@ -51,4 +47,4 @@ async def test_trip_defaults_to_draft(db_session):
     trip = (await db_session.execute(select(Trip).where(Trip.trip_no == "BT-2026-0001"))).scalar_one()
     assert trip.status is TripStatus.DRAFT
     assert trip.approver_id is None
-    assert trip.estimated_cost == Decimal("450000")
+    assert trip.cost_center_code == "CC2030"
