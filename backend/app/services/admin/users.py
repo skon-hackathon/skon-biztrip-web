@@ -19,7 +19,7 @@ from app.models import Department, User
 from app.schemas.admin import AdminUserCreate, AdminUserOut, AdminUserUpdate, PasswordSet
 from app.schemas.common import Page
 from app.security import hash_password
-from app.services.admin.common import assert_password_length, assert_unique
+from app.services.admin.common import assert_department, assert_password_length, assert_unique
 from app.services.codes import validate_codes
 
 #: 직급은 공통코드 POSITION 그룹에서만 나온다. 모든 쓰기 경로가 이 검증을 지난다.
@@ -123,15 +123,6 @@ async def get_user(session: AsyncSession, *, user_id: int) -> AdminUserOut:
     return (await _to_out(session, [user]))[0]
 
 
-async def _assert_department(session: AsyncSession, department_id: int) -> None:
-    if await session.get(Department, department_id) is None:
-        raise ValidationError(
-            "INVALID_DEPARTMENT",
-            f"존재하지 않는 부서입니다: {department_id}",
-            field="department_id",
-        )
-
-
 async def _assert_manager(
     session: AsyncSession, manager_id: int | None, *, self_id: int | None = None
 ) -> None:
@@ -165,7 +156,7 @@ async def create_user(session: AsyncSession, *, payload: AdminUserCreate) -> Adm
         message=f"이미 사용 중인 사번입니다: {payload.employee_no}",
         field="employee_no",
     )
-    await _assert_department(session, payload.department_id)
+    await assert_department(session, payload.department_id)
     await _assert_manager(session, payload.manager_id)
     await validate_codes(session, [(_POSITION_GROUP, "position_code", payload.position_code)])
 
@@ -205,7 +196,7 @@ async def update_user(
             )
 
     if "department_id" in changes and changes["department_id"] is not None:
-        await _assert_department(session, changes["department_id"])
+        await assert_department(session, changes["department_id"])
     if "manager_id" in changes:
         await _assert_manager(session, changes["manager_id"], self_id=user.id)
     if "position_code" in changes and changes["position_code"] is not None:
