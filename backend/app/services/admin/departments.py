@@ -2,13 +2,18 @@
 
 부서 트리의 순환(A→B→A)은 검사하지 않는다. 자기 자신만 막는다 — 데모 조직은 2단계이고,
 일반 순환 검출은 재귀 조회가 필요해 값에 비해 비싸다. 이 한계는 phase-status에 남긴다.
+
+삭제 전 사용자 참조를 서비스가 직접 세는 이유: `user` 테이블은 계정 공유 때문에 다른
+스키마(기본 public)에 있고, 그 쪽에서 우리 스키마를 역참조하지 않도록 `user.department_id`에
+FK를 걸지 않았다. FK가 없으면 `delete_entity`의 IntegrityError 변환이 아무것도 잡지 못해
+사람이 딸린 부서가 조용히 지워진다 (`admin/centers.py`의 `_REFERENCES`와 같은 처지다).
 """
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import NotFoundError, ValidationError
-from app.models import Department
+from app.errors import ConflictError, NotFoundError, ValidationError
+from app.models import Department, User
 from app.schemas.admin import DepartmentCreate, DepartmentOut, DepartmentUpdate
 from app.services.admin.common import assert_unique, delete_entity
 
@@ -78,8 +83,17 @@ async def update_department(
 
 async def delete_department(session: AsyncSession, *, department_id: int) -> None:
     department = await _load(session, department_id)
+    # FK가 없는 참조이므로 DB가 막아주지 못한다. 여기가 유일한 방어선이다.
+    users = await session.scalar(
+        select(func.count()).select_from(User).where(User.department_id == department_id)
+    )
+    if users:
+        raise ConflictError(
+            "HAS_DEPENDENTS", "이 부서에 속한 사용자가 있어 삭제할 수 없습니다"
+        )
+    # 센터는 여전히 FK로 참조하므로 그쪽 위반은 delete_entity가 409로 바꾼다.
     await delete_entity(
         session,
         department,
-        message="이 부서를 참조하는 사용자·센터가 있어 삭제할 수 없습니다",
+        message="이 부서를 참조하는 센터·하위 부서가 있어 삭제할 수 없습니다",
     )

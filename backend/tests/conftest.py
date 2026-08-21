@@ -1,19 +1,27 @@
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 
-import httpx
-import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from app.config import assert_safe_identifier, get_settings
-from app.db import build_engine, get_db
-from app.main import app
-from app.models import Base
-from app.seed import DEFAULT_PASSWORD, seed_all
-
 #: 테스트는 앱과 같은 DB 서버의 **별도 스키마**에서 돈다. 절대 앱 스키마를 쓰지 않는다.
 TEST_SCHEMA = os.getenv("TEST_DB_SCHEMA", "skon_test")
+
+# `user` 테이블은 운영에서 다른 프로젝트와 공유하는 public 스키마에 산다. 아래 test_engine이
+# 매 세션 drop_all을 돌리므로, 모델이 public을 가리킨 채로 임포트되면 그 한 번에 두
+# 프로젝트의 계정이 통째로 사라진다. 그래서 app.* 를 임포트하기 **전에** user 스키마를
+# 테스트 스키마로 덮어쓴다. 환경변수는 .env보다 우선한다.
+# 이 두 줄을 지우면 안 된다 — 아래 test_engine의 가드가 그 사실을 다시 확인한다.
+os.environ["USER_DB_SCHEMA"] = TEST_SCHEMA
+
+
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: E402
+
+from app.config import assert_safe_identifier, get_settings  # noqa: E402
+from app.db import build_engine, get_db  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import Base, User  # noqa: E402
+from app.seed import DEFAULT_PASSWORD, seed_all  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -26,6 +34,16 @@ async def test_engine():
         pytest.exit(
             f"TEST_DB_SCHEMA({TEST_SCHEMA})가 앱의 DB_SCHEMA와 같습니다. "
             "테스트는 매 실행마다 drop_all을 수행하므로 반드시 다른 스키마를 지정하십시오.",
+            returncode=1,
+        )
+
+    # user는 유일하게 스키마가 박힌 테이블이다. 여기가 public이면 drop_all이 다른
+    # 프로젝트와 공유하는 계정 테이블을 지운다. 위의 환경변수 설정이 실제로 먹었는지
+    # 모델의 최종 상태로 확인한다.
+    if User.__table__.schema != TEST_SCHEMA:
+        pytest.exit(
+            f"user 테이블 스키마가 {User.__table__.schema!r}입니다(기대: {TEST_SCHEMA!r}). "
+            "drop_all이 공유 계정 테이블을 지울 수 있으므로 실행을 중단합니다.",
             returncode=1,
         )
 

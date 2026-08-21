@@ -2,14 +2,14 @@ from sqlalchemy import Boolean, Enum as SAEnum, ForeignKey, Index, Integer, Stri
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.enums import ActivityAction, EntityType, NotificationType
-from app.models.base import Base, TimestampMixin
+from app.models.base import USER_FK, Base, TimestampMixin
 
 
 class Notification(Base, TimestampMixin):
     __tablename__ = "notification"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(USER_FK), nullable=False, index=True)
     type: Mapped[NotificationType] = mapped_column(
         SAEnum(NotificationType, name="notification_type"), nullable=False
     )
@@ -32,7 +32,7 @@ class ActivityLog(Base, TimestampMixin):
         SAEnum(EntityType, name="entity_type"), nullable=False
     )
     entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    actor_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    actor_id: Mapped[int] = mapped_column(ForeignKey(USER_FK), nullable=False)
     action: Mapped[ActivityAction] = mapped_column(
         SAEnum(ActivityAction, name="activity_action"), nullable=False
     )

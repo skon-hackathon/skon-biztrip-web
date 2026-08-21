@@ -136,11 +136,21 @@ DB_USER=skon
 DB_PASSWORD=skon
 DB_NAME=skon
 DB_SCHEMA=skon
+USER_DB_SCHEMA=public
 TEST_DB_SCHEMA=skon_test
 JWT_SECRET=<32바이트 이상>
 ```
 
 접속은 매 커넥션마다 `search_path`를 `DB_SCHEMA` **하나로만** 고정한다. `public`을 fallback으로 남기지 않으므로 이 앱의 질의나 DDL이 다른 스키마로 새어나갈 수 없다.
+
+### `user` 테이블만 `public`에 있다
+
+다른 프로젝트와 **계정을 공유**하기 위해서다. 데모 범위라 SSO 대신 같은 테이블 + 같은 `JWT_SECRET`으로 대신한다 — 두 프로젝트가 같은 SECRET·HS256을 쓰면 payload `{"sub": "<user.id>"}` 토큰이 서로 통용되고, 비밀번호 해시는 양쪽 다 bcrypt다.
+
+- 위치는 `USER_DB_SCHEMA`(기본 `public`)가 정한다. `user`만 스키마 한정자가 붙은 채(`public."user"`) 질의되고 나머지는 그대로 `search_path`로 해석된다.
+- 공유 테이블이 이 프로젝트 스키마를 역참조하지 않도록 `user.department_id`에는 FK가 없고 `role`은 PG enum이 아니라 varchar다. 부서 존재 검증과 부서 삭제 시 사용자 참조 검사는 앱이 한다.
+- 기존 DB를 옮기는 SQL은 [`docs/migrations/2026-08-21-user-table-to-public.sql`](docs/migrations/2026-08-21-user-table-to-public.sql)이다. **사람이 한 번 실행해야 한다.**
+- 테스트는 `user`도 `TEST_DB_SCHEMA` 안에 만든다. 아니면 매 실행의 `drop_all`이 공유 계정을 지운다 — 픽스처가 그 상태를 감지하면 실행을 거부한다.
 
 ### 스키마·데이터 준비는 수동이다
 

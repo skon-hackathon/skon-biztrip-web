@@ -4,7 +4,7 @@ from sqlalchemy import Date, DateTime, Enum as SAEnum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.enums import TripStatus
-from app.models.base import Base, TimestampMixin
+from app.models.base import USER_FK, Base, TimestampMixin
 
 
 class Trip(Base, TimestampMixin):
@@ -12,7 +12,7 @@ class Trip(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     trip_no: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(USER_FK), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     purpose_code: Mapped[str] = mapped_column(String(40), nullable=False)
     purpose_detail: Mapped[str] = mapped_column(Text, nullable=False)
@@ -28,7 +28,7 @@ class Trip(Base, TimestampMixin):
     status: Mapped[TripStatus] = mapped_column(
         SAEnum(TripStatus, name="trip_status"), default=TripStatus.DRAFT, nullable=False, index=True
     )
-    approver_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    approver_id: Mapped[int | None] = mapped_column(ForeignKey(USER_FK))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reject_reason: Mapped[str | None] = mapped_column(Text)

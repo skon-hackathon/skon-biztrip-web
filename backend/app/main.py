@@ -73,4 +73,7 @@ async def health_db() -> dict[str, str]:
         "host": settings.db_host,
         "database": settings.db_name,
         "schema": schema or "",
+        # user 테이블만 다른 스키마에 있다. 계정을 공유하는 상대 프로젝트와 이 값이
+        # 어긋나면 로그인은 되는데 서로 다른 계정 집합을 보는 상태가 된다.
+        "user_schema": settings.user_db_schema,
     }

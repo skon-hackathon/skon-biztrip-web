@@ -21,6 +21,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD를 .env에 지정하십시오}
       DB_NAME: ${DB_NAME:?DB_NAME을 .env에 지정하십시오}
       DB_SCHEMA: ${DB_SCHEMA:-skon}
+      # user 테이블만 다른 스키마에 있다 (다른 프로젝트와 계정 공유).
+      USER_DB_SCHEMA: ${USER_DB_SCHEMA:-public}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET을 .env에 32바이트 이상으로 지정하십시오}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/api/v1/health')\""]

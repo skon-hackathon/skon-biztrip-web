@@ -22,7 +22,10 @@ from app.seed import seed_all
 
 def _target() -> str:
     s = get_settings()
-    return f"{s.db_user}@{s.db_host}:{s.db_port}/{s.db_name} (schema={s.db_schema})"
+    return (
+        f"{s.db_user}@{s.db_host}:{s.db_port}/{s.db_name} "
+        f"(schema={s.db_schema}, user 테이블={s.user_db_schema})"
+    )
 
 
 async def check() -> None:
@@ -44,10 +47,13 @@ async def check() -> None:
 
 
 async def init_db() -> None:
-    schema = get_settings().db_schema
+    settings = get_settings()
+    # user 테이블은 다른 프로젝트와 공유하려고 별도 스키마(기본 public)에 있다.
+    schemas = dict.fromkeys([settings.db_schema, settings.user_db_schema])
     async with engine.begin() as conn:
-        # 스키마명은 위에서 식별자 검증을 거친 값이다 (app.config.assert_safe_identifier).
-        await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+        for schema in schemas:
+            # 스키마명은 위에서 식별자 검증을 거친 값이다 (app.config.assert_safe_identifier).
+            await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         await conn.run_sync(Base.metadata.create_all)
     print(f"스키마·테이블 준비 완료: {_target()}")
     print("  기존 테이블은 그대로 두고 없는 것만 만든다. 컬럼 변경은 반영하지 않는다.")

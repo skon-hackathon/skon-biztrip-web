@@ -14,14 +14,14 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.enums import ExpenseReportStatus
-from app.models.base import Base, TimestampMixin
+from app.models.base import USER_FK, Base, TimestampMixin
 
 
 class CorporateCard(Base, TimestampMixin):
     __tablename__ = "corporate_card"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(USER_FK), nullable=False, index=True)
     card_no_masked: Mapped[str] = mapped_column(String(30), nullable=False)
     brand: Mapped[str] = mapped_column(String(30), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -47,7 +47,7 @@ class ExpenseReport(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     report_no: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
     trip_id: Mapped[int] = mapped_column(ForeignKey("trip.id"), unique=True, nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(USER_FK), nullable=False, index=True)
     status: Mapped[ExpenseReportStatus] = mapped_column(
         SAEnum(ExpenseReportStatus, name="expense_report_status"),
         default=ExpenseReportStatus.DRAFT,
@@ -59,7 +59,7 @@ class ExpenseReport(Base, TimestampMixin):
     # 비정규화 값: expense_item.amount_krw 합계와 항상 일치해야 한다.
     # 서비스 레이어(Task 9 / Phase 3)가 항목 추가·수정·삭제 시마다 재계산해서 갱신할 책임을 진다.
     total_amount_krw: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"), nullable=False)
-    approver_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    approver_id: Mapped[int | None] = mapped_column(ForeignKey(USER_FK))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reject_reason: Mapped[str | None] = mapped_column(Text)

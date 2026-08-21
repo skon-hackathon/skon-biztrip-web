@@ -9,7 +9,7 @@ from app.services.admin.common import (
     assert_unique,
     delete_entity,
 )
-from tests.factories import make_department, make_user
+from tests.factories import make_department
 
 
 def test_eight_character_ascii_password_passes():
@@ -37,11 +37,16 @@ def test_korean_password_over_72_bytes_is_rejected():
 
 
 async def test_delete_entity_turns_a_reference_into_409(db_session):
-    department = await make_department(db_session)
-    await make_user(db_session, department=department)
+    # FK가 실제로 걸린 참조라야 IntegrityError가 나고, 그 변환이 이 테스트의 대상이다.
+    # user.department_id는 계정 공유 때문에 FK가 없으므로 여기 쓸 수 없다 —
+    # 그 경로는 services/admin/departments.py가 직접 세고 별도 테스트가 지킨다.
+    parent = await make_department(db_session)
+    child = await make_department(db_session, name="하위부서")
+    child.parent_id = parent.id
+    await db_session.flush()
 
     with pytest.raises(ConflictError) as exc:
-        await delete_entity(db_session, department, message="참조가 있습니다")
+        await delete_entity(db_session, parent, message="참조가 있습니다")
 
     assert exc.value.code == "HAS_DEPENDENTS"
     assert exc.value.status_code == 409
