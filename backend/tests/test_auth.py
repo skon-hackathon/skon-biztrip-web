@@ -175,6 +175,18 @@ async def test_rejected_user_gets_rejected_code(client, db_session):
     assert response.json()["error"]["code"] == "SIGNUP_REJECTED"
 
 
+async def test_login_accepts_case_variant_email(client, db_session, seeded):
+    """가입에서 소문자로 저장하므로 로그인도 같은 정규화를 지나야 한다.
+    아니면 대문자로 가입한 사람이 자기 계정에 못 들어간다."""
+    from app.seed import DEFAULT_PASSWORD
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "ADMIN@SKON.EXAMPLE", "password": DEFAULT_PASSWORD},
+    )
+    assert response.status_code == 200
+
+
 async def test_suspended_active_user_stays_generic(client, db_session):
     """승인됐지만 관리자가 정지시킨 계정은 기존 메시지를 유지한다."""
     from app.enums import UserStatus

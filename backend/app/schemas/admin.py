@@ -10,7 +10,7 @@ PATCH 스키마의 필드는 전부 Optional이며 서비스가 `model_dump(excl
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.enums import UserRole, UserStatus
 
@@ -129,6 +129,13 @@ class AdminUserCreate(BaseModel):
     manager_id: int | None = None
     role: UserRole = UserRole.EMPLOYEE
     is_active: bool = True
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        """이메일을 소문자로 고정한다. `app/schemas/auth.py`의 동명 검증기와 이유가 같다 —
+        관리자가 만든 계정도 정규화하지 않으면 대소문자만 다른 중복 계정이 생긴다."""
+        return value.lower()
 
 
 class AdminUserUpdate(BaseModel):

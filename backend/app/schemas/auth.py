@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.enums import UserRole
 
@@ -6,6 +6,18 @@ from app.enums import UserRole
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        """이메일을 소문자로 고정한다.
+
+        Postgres의 `=`도 unique 인덱스도 대소문자를 구분하고, Pydantic의 EmailStr은
+        도메인만 소문자화한다. 정규화하지 않으면 대소문자만 다른 같은 주소가 서로
+        다른 계정이 되어 가입 중복 가드가 통째로 우회된다. 로그인에도 같은 정규화를
+        걸어야 대문자로 가입한 사람이 자기 계정에 들어갈 수 있다.
+        """
+        return value.lower()
 
 
 class UserOut(BaseModel):
@@ -36,6 +48,12 @@ class SignupRequest(BaseModel):
     password: str = Field(min_length=1)
     name: str = Field(min_length=1, max_length=50)
     department_id: int
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        """이메일을 소문자로 고정한다. LoginRequest의 동명 검증기와 이유가 같다."""
+        return value.lower()
 
 
 class SignupResponse(BaseModel):

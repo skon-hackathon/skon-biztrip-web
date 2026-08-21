@@ -148,3 +148,65 @@ async def test_signup_resubmits_after_rejection(client, db_session):
     assert user.is_active is False
     assert user.name == "재신청"
     assert user.password_hash != original_hash
+
+
+async def test_signup_rejects_case_variant_of_pending_email(client, db_session):
+    """대소문자만 다른 이메일이 ALREADY_PENDING 가드를 우회하면 안 된다.
+
+    Postgres의 `=`도 unique 인덱스도 대소문자를 구분한다. 정규화하지 않으면 남이
+    신청해 둔 대기 계정 옆에 사실상 같은 주소의 행이 하나 더 생기고, 관리자가
+    그중 공격자의 행을 승인할 수 있다.
+    """
+    user = await make_user(db_session, status=UserStatus.PENDING, is_active=False)
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "email": user.email.upper(),
+            "password": "attacker-known-pw",
+            "name": "가로채기",
+            "department_id": user.department_id,
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "ALREADY_PENDING"
+
+
+async def test_signup_rejects_case_variant_of_active_email(client, db_session):
+    user = await make_user(db_session)
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "email": user.email.upper(),
+            "password": "signup1234!",
+            "name": "중복",
+            "department_id": user.department_id,
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "DUPLICATE_EMAIL"
+
+
+async def test_signup_stores_email_lowercased(client, db_session):
+    department_id = await _department_id(db_session)
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "email": "MixedCase@skon.example",
+            "password": "signup1234!",
+            "name": "혼합대소",
+            "department_id": department_id,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["email"] == "mixedcase@skon.example"
+
+    stored = await db_session.scalar(
+        select(User).where(User.email == "mixedcase@skon.example")
+    )
+    assert stored is not None
