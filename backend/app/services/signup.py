@@ -6,6 +6,7 @@
 """
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import UserRole, UserStatus
@@ -53,7 +54,17 @@ async def signup(session: AsyncSession, *, payload: SignupRequest) -> SignupResp
         is_active=False,
     )
     session.add(user)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # 실패한 commit 뒤의 세션은 오염 상태다. 롤백하지 않으면 이후 문장이
+        # PendingRollbackError가 되어 진짜 원인이 묻힌다.
+        await session.rollback()
+        raise ConflictError(
+            "DUPLICATE_EMAIL",
+            f"이미 사용 중인 이메일입니다: {payload.email}",
+            field="email",
+        ) from exc
     return SignupResponse(
         email=user.email, status=UserStatus.PENDING.value, message=_PENDING_MESSAGE
     )

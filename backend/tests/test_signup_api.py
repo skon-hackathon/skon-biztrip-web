@@ -210,3 +210,36 @@ async def test_signup_stores_email_lowercased(client, db_session):
         select(User).where(User.email == "mixedcase@skon.example")
     )
     assert stored is not None
+
+
+async def test_concurrent_signup_is_409_not_500(client, db_session, monkeypatch):
+    """유니크 위반이 500이 되면 Agent가 절대 성공할 수 없는 요청을 재시도한다.
+
+    select와 commit 사이의 TOCTOU를 강제로 재현한다 — 존재 조회가 못 찾은 척하게
+    만들고, DB의 유니크 제약이 대신 잡게 둔다.
+    """
+    user = await make_user(db_session)
+    await db_session.commit()
+
+    real_scalar = db_session.scalar
+
+    async def _miss(statement, *args, **kwargs):
+        # User 존재 조회만 None으로 만든다. 다른 조회는 그대로 통과시킨다.
+        result = await real_scalar(statement, *args, **kwargs)
+        if isinstance(result, User):
+            return None
+        return result
+
+    monkeypatch.setattr(db_session, "scalar", _miss)
+
+    response = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "email": user.email,
+            "password": _PW,
+            "name": "동시가입",
+            "department_id": user.department_id,
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "DUPLICATE_EMAIL"
