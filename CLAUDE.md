@@ -115,20 +115,21 @@ ingress/      nginx.conf (운영 리버스 프록시)
 
 ## 마이그레이션
 
-Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 기존 테이블의 컬럼 변경은 반영하지 않는다. 스키마를 바꾸면 해당 테이블을 지우고 `init-db`를 다시 돌린다.
+Alembic을 쓰지 않는다. `app.cli init-db`가 없는 테이블만 만들고 기존 테이블의 컬럼 변경은 반영하지 않는다.
 
-## 다음 Phase로 넘어간 항목
+컬럼을 바꾸면 두 길 중 하나다. **참조하는 테이블이 없으면** 해당 테이블을 지우고 `init-db`를 다시 돌린다. **다른 테이블이 FK로 참조하면**(예: `expense_report.trip_id` → `trip`) 테이블을 드롭할 수 없으므로 손으로 `ALTER TABLE`을 돌린다 — 드롭하면 참조하는 쪽 데이터가 함께 사라진다. 2026-08-20의 출장 필드 제거가 그 경우였고, 문장은 `docs/superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md`에 있다.
 
-`docs/phase-status.md`의 "Phase 4에서 넘어온 항목" 절을 **Phase 5 착수 전에** 읽을 것. 요약하면:
+## 이월 항목
 
-- `/admin/*`을 만들면 `SCOPE_REQUIREMENTS`에 `ApiKeyScope.ADMIN`으로 등록해야 한다. 빠뜨리면 기동 실패다.
-- Admin 삭제는 `IntegrityError`를 409 `HAS_DEPENDENTS`로 변환해야 한다. 안 하면 500이 되고 Agent가 재시도한다.
-- 비밀번호 엔드포인트를 만들면 요청 스키마에서 72바이트를 막아야 한다(bcrypt 5.x는 자르지 않고 던지며, 한글은 24자면 넘는다).
-- **브라우저 수동 시나리오 23개 미확인.** Phase 4 화면 2개(`/settings/api-keys`·`/developers`)는 렌더 확인이 전혀 안 됐다 — 타입체크·빌드·curl만 통과한 상태다.
+`docs/phase-status.md`의 "Phase 5에서 넘어온 항목"과 "후속 수정" 절을 읽을 것. 요약하면:
+
+- **브라우저 수동 시나리오 40건 미확인.** Phase 4·5의 화면 7개와 이번 모달은 **렌더 확인이 전혀 안 됐다** — 타입체크·빌드·테스트·curl만 통과한 상태다.
+- **운영 DB의 스키마 변경은 코드 머지와 별개로 사람이 돌려야 한다.** 안 돌리면 새 출장 생성이 NOT NULL 위반으로 500이 된다.
 - `last_used_at`을 API Key 요청마다 갱신(UPDATE + COMMIT)한다. 트래픽이 늘면 스로틀로 옮긴다.
-- 키 발급·폐기는 `activity_log`에 남지 않는다(`EntityType`에 멤버가 없다).
-- 출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다.
+- 키 발급·폐기와 Admin 마스터 변경은 `activity_log`에 남지 않는다(`EntityType`에 멤버가 없다).
+- 출장 상세가 정산서 존재 여부를 목록 `size=100` 조회로 판단한다. Admin 목록도 페이징 UI 없이 `size=100`이다.
 - 항목의 FC/CC override는 마스터 비활성화 시점에 재검증되지 않는다.
+- 목록 `q`는 LIKE 와일드카드를 이스케이프하지 않는다. 매칭 후보 조회에 페이징이 없다.
 
 ## 환경 주의
 

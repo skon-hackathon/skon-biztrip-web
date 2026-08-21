@@ -1,7 +1,8 @@
 # Phase 현황 — 완료분과 다음 작업
 
-- 기준: Phase 5 (운영) 완료 시점
+- 기준: Phase 5 (운영) 완료 + 후속 수정(2026-08-20) 시점
 - 설계: [`superpowers/specs/2026-08-12-skon-biztrip-web-design.md`](superpowers/specs/2026-08-12-skon-biztrip-web-design.md)
+- 후속 수정 설계: [`superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md`](superpowers/specs/2026-08-20-trip-form-slim-card-picker-design.md)
 - Phase 1 계획: [`superpowers/plans/2026-08-12-phase1-foundation.md`](superpowers/plans/2026-08-12-phase1-foundation.md)
 - Phase 2 계획: [`superpowers/plans/2026-08-17-phase2-trips.md`](superpowers/plans/2026-08-17-phase2-trips.md)
 - Phase 3 계획: [`superpowers/plans/2026-08-18-phase3-expenses.md`](superpowers/plans/2026-08-18-phase3-expenses.md)
@@ -15,7 +16,8 @@
 | 2 | 출장 — 신청·목록·상세·수정·결재·타임라인·알림 | 완료 |
 | 3 | 정산 — 카드내역·자동매칭·정산서·FC/CC | 완료 |
 | 4 | 개발자 — API Key·스코프·`/developers` 가이드 | 완료 |
-| 5 | 운영 — Admin CRUD, 반응형, 배포 검증 | **완료** |
+| 5 | 운영 — Admin CRUD, 반응형, 배포 검증 | 완료 |
+| — | 후속 수정 — 출장 필드 축소, 정산 카드내역 피커 | **완료** |
 
 **테스트**: 백엔드 569건 · 프론트 73건 · 타입체크 0 errors / 0 warnings · 빌드 성공
 
