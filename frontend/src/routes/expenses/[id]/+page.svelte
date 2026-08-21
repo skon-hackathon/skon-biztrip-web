@@ -17,6 +17,7 @@
 		updateExpenseItem
 	} from '$lib/api/expenses';
 	import type {
+		CardTransactionItem,
 		ExpenseItemPatch,
 		ExpenseReportDetail,
 		MatchCandidate,
@@ -24,9 +25,11 @@
 	} from '$lib/api/types';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
+	import CardTransactionPicker from '$lib/components/CardTransactionPicker.svelte';
 	import ExpenseItemsTable from '$lib/components/ExpenseItemsTable.svelte';
 	import ExpenseStatusBadge from '$lib/components/ExpenseStatusBadge.svelte';
 	import MatchPanel from '$lib/components/MatchPanel.svelte';
+	import Modal from '$lib/components/Modal.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Textarea from '$lib/components/Textarea.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
@@ -47,6 +50,8 @@
 	let rejectReason = $state('');
 	let fundCenterValue = $state('');
 	let costCenterValue = $state('');
+	let pickerOpen = $state(false);
+	let picker = $state<ReturnType<typeof CardTransactionPicker> | null>(null);
 
 	const reportId = $derived(Number(page.params.id));
 	const isOwner = $derived(!!report && report.user_id === auth.user?.id);
@@ -137,6 +142,23 @@
 		);
 	}
 
+	/**
+	 * 자동매칭 후보 밖의 거래를 담는다. 비목은 서버가 계산해 준 추천값을 그대로 쓴다 —
+	 * 화면이 업종→비목 매핑을 따로 가지면 자동매칭과 추천이 갈라진다.
+	 *
+	 * 담은 거래는 unsettled 필터에서 빠지므로 피커를 다시 불러 목록을 맞춘다.
+	 */
+	function addTransaction(transaction: CardTransactionItem): void {
+		void act(
+			() =>
+				addExpenseItem(reportId, {
+					card_transaction_id: transaction.id,
+					expense_category_code: transaction.suggested_expense_category_code
+				}),
+			{ refreshCandidates: true }
+		).then(() => picker?.reload());
+	}
+
 	function patchItem(itemId: number, patch: ExpenseItemPatch): void {
 		void act(() => updateExpenseItem(itemId, patch));
 	}
@@ -214,7 +236,14 @@
 				<MatchPanel {candidates} {busy} {editable} onadd={addCandidate} />
 			</div>
 
-			<h2 class="mt-10 text-display-sm">정산 항목</h2>
+			<div class="mt-10 flex flex-wrap items-center justify-between gap-3">
+				<h2 class="text-display-sm">정산 항목</h2>
+				{#if editable}
+					<Button variant="secondary" disabled={busy} onclick={() => (pickerOpen = true)}>
+						법인카드 사용내역 보기
+					</Button>
+				{/if}
+			</div>
 			<div class="mt-4">
 				{#if report.items.length === 0}
 					<p class="text-body-sm text-muted">아직 담은 항목이 없습니다.</p>
@@ -299,4 +328,11 @@
 			</Card>
 		</aside>
 	</div>
+
+	<!-- 열 때마다 새로 마운트한다. 담고 닫은 뒤 다시 열면 목록이 최신이어야 한다. -->
+	{#if pickerOpen}
+		<Modal open title="법인카드 사용내역" onclose={() => (pickerOpen = false)}>
+			<CardTransactionPicker bind:this={picker} {busy} {editable} onadd={addTransaction} />
+		</Modal>
+	{/if}
 {/if}
