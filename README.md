@@ -209,7 +209,7 @@ cd frontend && npm test               # 74건
 cd frontend && npm run check          # 타입체크 (0 errors / 0 warnings)
 ```
 
-백엔드 테스트는 같은 DB 서버의 **별도 스키마**(`TEST_DB_SCHEMA`, 기본 `skon_test`)에서 돈다. 매 실행마다 그 스키마를 `drop_all` 후 재생성하므로 **`DB_SCHEMA`와 절대 같으면 안 된다.** 같으면 픽스처가 실행 자체를 거부한다.
+백엔드 테스트는 같은 DB 서버의 **별도 스키마**(`TEST_DB_SCHEMA`, 기본 `skon_test`)에서 돈다. 매 실행마다 그 스키마를 `drop_all` 후 재생성하므로 `public`·`DB_SCHEMA`·`USER_DB_SCHEMA`와 달라야 하고 이름에 독립된 `test` 구간이 있어야 한다. 위 조건을 어기면 모델 import와 DB 연결 전에 픽스처가 실행 자체를 거부한다.
 
 ## 배포
 

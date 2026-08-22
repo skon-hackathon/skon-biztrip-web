@@ -1,8 +1,44 @@
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 
-#: 테스트는 앱과 같은 DB 서버의 **별도 스키마**에서 돈다. 절대 앱 스키마를 쓰지 않는다.
-TEST_SCHEMA = os.getenv("TEST_DB_SCHEMA", "skon_test")
+import pytest
+
+from app.config import Settings, assert_safe_identifier
+
+
+# Settings를 직접 만들어 .env까지 읽되, get_settings() 캐시는 아직 채우지 않는다. 캐시가
+# 채워지면 아래 USER_DB_SCHEMA 덮어쓰기를 app.models가 보지 못한다.
+_source_settings = Settings()
+TEST_SCHEMA = _source_settings.test_db_schema
+
+
+def _assert_isolated_test_schema() -> None:
+    """파괴적 DDL의 대상을 운영·공유 스키마와 이름 단계에서 분리한다."""
+    assert_safe_identifier(TEST_SCHEMA, field="TEST_DB_SCHEMA")
+    assert_safe_identifier(_source_settings.db_schema, field="DB_SCHEMA")
+    assert_safe_identifier(_source_settings.user_db_schema, field="USER_DB_SCHEMA")
+
+    if TEST_SCHEMA.lower() == "public":
+        raise ValueError("TEST_DB_SCHEMA는 공유 스키마 public일 수 없습니다.")
+    if TEST_SCHEMA == _source_settings.db_schema:
+        raise ValueError(
+            f"TEST_DB_SCHEMA({TEST_SCHEMA})가 앱의 DB_SCHEMA와 같습니다."
+        )
+    if TEST_SCHEMA == _source_settings.user_db_schema:
+        raise ValueError(
+            f"TEST_DB_SCHEMA({TEST_SCHEMA})가 공유 USER_DB_SCHEMA와 같습니다."
+        )
+    if "test" not in TEST_SCHEMA.lower().split("_"):
+        raise ValueError(
+            "TEST_DB_SCHEMA에는 독립된 'test' 구간이 있어야 합니다. "
+            "예: skon_test, skon_test_gw0, test_skon"
+        )
+
+
+try:
+    _assert_isolated_test_schema()
+except ValueError as exc:
+    pytest.exit(str(exc), returncode=1)
 
 # `user` 테이블은 운영에서 다른 프로젝트와 공유하는 public 스키마에 산다. 아래 test_engine이
 # 매 세션 drop_all을 돌리므로, 모델이 public을 가리킨 채로 임포트되면 그 한 번에 두
@@ -13,11 +49,10 @@ os.environ["USER_DB_SCHEMA"] = TEST_SCHEMA
 
 
 import httpx  # noqa: E402
-import pytest  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: E402
 
-from app.config import assert_safe_identifier, get_settings  # noqa: E402
+from app.config import get_settings  # noqa: E402
 from app.db import build_engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base, User  # noqa: E402

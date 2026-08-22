@@ -27,6 +27,12 @@ def test_settings_read_connection_parts_from_env(monkeypatch):
     assert settings.jwt_expire_hours == 8
 
 
+def test_settings_read_test_schema_from_env(monkeypatch):
+    settings = _settings(monkeypatch, TEST_DB_SCHEMA="biztrip_test")
+
+    assert settings.test_db_schema == "biztrip_test"
+
+
 def test_database_url_is_assembled_from_parts(monkeypatch):
     settings = _settings(monkeypatch)
 

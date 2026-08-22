@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     db_password: str = "skon"
     db_name: str = "skon"
     db_schema: str = "skon"
+    test_db_schema: str = "skon_test"
 
     #: `user` 테이블만 사는 스키마. 다른 프로젝트와 계정을 공유하려고 `public`에 두었다.
     #: 나머지 테이블은 `db_schema`에 있고 search_path도 그 하나로만 고정되므로, user만
